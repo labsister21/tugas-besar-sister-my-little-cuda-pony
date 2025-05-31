@@ -1,0 +1,71 @@
+export interface NodeInfo {
+  id: string;
+  host: string;
+  port: number;
+}
+
+export interface LogEntry {
+  term: number;
+  index: number;
+  command: Command;
+  timestamp: number;
+}
+
+export interface Command {
+  type: 'SET' | 'DEL' | 'APPEND' | 'PING' | 'GET' | 'STRLN' | 'ADD_NODE' | 'REMOVE_NODE';
+  key?: string;
+  value?: string;
+  nodeInfo?: NodeInfo; // For membership changes
+  nodeId?: string;     // For node removal
+}
+
+export interface MembershipChangeCommand {
+  type: 'ADD_NODE' | 'REMOVE_NODE';
+  nodeInfo?: NodeInfo;
+  nodeId?: string;
+}
+
+export interface VoteRequest {
+  term: number;
+  candidateId: string;
+  lastLogIndex: number;
+  lastLogTerm: number;
+}
+
+export interface VoteResponse {
+  term: number;
+  voteGranted: boolean;
+}
+
+export interface AppendEntriesRequest {
+  term: number;
+  leaderId: string;
+  prevLogIndex: number;
+  prevLogTerm: number;
+  entries: LogEntry[];
+  leaderCommit: number;
+}
+
+export interface AppendEntriesResponse {
+  term: number;
+  success: boolean;
+}
+
+export enum NodeState {
+  FOLLOWER = 'FOLLOWER',
+  CANDIDATE = 'CANDIDATE',
+  LEADER = 'LEADER'
+}
+
+export interface ClientRequest {
+  command: Command;
+  clientId: string;
+  requestId: string;
+}
+
+export interface ClientResponse {
+  success: boolean;
+  data?: any;
+  error?: string;
+  leaderInfo?: NodeInfo;
+}
