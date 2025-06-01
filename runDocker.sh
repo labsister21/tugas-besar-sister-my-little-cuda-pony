@@ -52,6 +52,8 @@ for ((i=1; i<=jumlah_client; i++)); do
   raft-client-$i:
     build: .
     container_name: raft-client-$i
+    tty: true
+    stdin_open: true
     networks:
       - raft-network
     command: npm run dev client
@@ -86,10 +88,16 @@ cluster_config+="];"
 # Write cluster configuration to a temporary file
 echo $cluster_config > src/clusterConfig.ts
 
-# Start Docker Compose
+# Start Docker Compose in detached mode
 echo "Starting $jumlah_server server(s) and $jumlah_client client(s)..."
-docker-compose up --build
+docker-compose up --build -d
 
-# Cleanup
-# Uncomment the following line to automatically remove containers after stopping
-# docker-compose down
+# If there are clients, attach to the first one for interactive use
+if [ "$jumlah_client" -gt 0 ]; then
+    echo "Attaching to raft-client-1 for interactive use..."
+    echo "To attach to other clients, use: docker exec -it raft-client-<number> bash"
+    docker exec -it raft-client-1 bash -c "npm run dev client"
+fi
+
+# Note: Containers will keep running in the background
+echo "To stop all containers, run: docker-compose down"

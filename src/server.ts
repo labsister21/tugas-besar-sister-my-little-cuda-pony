@@ -2,7 +2,6 @@ import express, { Request, Response, NextFunction } from 'express';
 import { RaftNode } from './raftNode';
 import { NodeInfo, Command, ClientRequest, ClientResponse } from './types';
 
-// Helper function to wrap async route handlers
 const asyncHandler = (fn: (req: Request, res: Response, next: NextFunction) => Promise<any>) => {
   return (req: Request, res: Response, next: NextFunction) => {
     Promise.resolve(fn(req, res, next)).catch(next);
@@ -21,7 +20,6 @@ export class RaftServer {
   }
 
   private setupRoutes(): void {
-    // Raft internal endpoints
     this.app.post('/raft/vote', (req: Request, res: Response) => {
       const response = this.raftNode.handleVoteRequest(req.body);
       res.json(response);
@@ -32,7 +30,6 @@ export class RaftServer {
       res.json(response);
     });
 
-    // Client endpoints
     this.app.post('/execute', asyncHandler(async (req: Request, res: Response) => {
       if (this.raftNode.getState() !== 'LEADER') {
         const leaderInfo = this.raftNode.getLeaderInfo();
@@ -71,7 +68,6 @@ export class RaftServer {
       });
     });
 
-    // Membership management
     this.app.post('/cluster/add', asyncHandler(async (req: Request, res: Response) => {
       if (this.raftNode.getState() !== 'LEADER') {
         const leaderInfo = this.raftNode.getLeaderInfo();
@@ -84,7 +80,6 @@ export class RaftServer {
       }
 
       const { nodeInfo } = req.body as { nodeInfo: NodeInfo };
-      // Use consensus-based membership change
       await this.raftNode.addNodeConsensus(nodeInfo);
       
       res.json({ success: true });
@@ -102,13 +97,11 @@ export class RaftServer {
       }
 
       const { nodeId } = req.params;
-      // Use consensus-based membership change
       await this.raftNode.removeNodeConsensus(nodeId);
       
       res.json({ success: true });
     }));
 
-    // Health check
     this.app.get('/health', (req: Request, res: Response) => {
       res.json({
         state: this.raftNode.getState(),
@@ -116,7 +109,6 @@ export class RaftServer {
       });
     });
 
-    // Error handling middleware
     this.app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
       console.error('Server error:', err);
       res.status(500).json({

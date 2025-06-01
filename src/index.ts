@@ -10,7 +10,6 @@ async function startServer(nodeId: string, port: number, host: string): Promise<
     process.exit(1);
   }
 
-  // Override port and host with environment variables if provided
   nodeInfo.port = parseInt(process.env.NODE_PORT || port.toString(), 10);
   nodeInfo.host = process.env.NODE_HOST || host;
 
