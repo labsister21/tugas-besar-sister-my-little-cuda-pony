@@ -15,8 +15,8 @@ export interface Command {
   type: 'SET' | 'DEL' | 'APPEND' | 'PING' | 'GET' | 'STRLN' | 'ADD_NODE' | 'REMOVE_NODE';
   key?: string;
   value?: string;
-  nodeInfo?: NodeInfo; // For membership changes
-  nodeId?: string;     // For node removal
+  nodeInfo?: NodeInfo;
+  nodeId?: string;
 }
 
 export interface MembershipChangeCommand {

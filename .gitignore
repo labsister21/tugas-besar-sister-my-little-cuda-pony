@@ -146,3 +146,6 @@ coverage/
 # Temporary folders
 tmp/
 temp/
+
+# Docker
+docker-compose.yml

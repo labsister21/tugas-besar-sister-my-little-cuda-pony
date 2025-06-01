@@ -52,7 +52,6 @@ export class RaftNode extends EventEmitter {
       clearTimeout(this.electionTimeout);
     }
     
-    // Better timeout range
     const timeout = RaftNode.MIN_ELECTION_TIMEOUT + 
       Math.random() * (RaftNode.MAX_ELECTION_TIMEOUT - RaftNode.MIN_ELECTION_TIMEOUT);
     

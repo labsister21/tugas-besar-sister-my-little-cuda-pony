@@ -1,19 +1,17 @@
 import { RaftServer } from './server';
 import { RaftClient } from './client';
 import { NodeInfo } from './types';
+import { DEFAULT_CLUSTER } from './clusterConfig';
 
-const DEFAULT_CLUSTER: NodeInfo[] = [
-  { id: 'node1', host: 'localhost', port: 3001 },
-  { id: 'node2', host: 'localhost', port: 3002 },
-  { id: 'node3', host: 'localhost', port: 3003 }
-];
-
-async function startServer(nodeId: string, port: number): Promise<void> {
+async function startServer(nodeId: string, port: number, host: string): Promise<void> {
   const nodeInfo = DEFAULT_CLUSTER.find(node => node.id === nodeId);
   if (!nodeInfo) {
     console.error(`Node ${nodeId} not found in cluster configuration`);
     process.exit(1);
   }
+
+  nodeInfo.port = parseInt(process.env.NODE_PORT || port.toString(), 10);
+  nodeInfo.host = process.env.NODE_HOST || host;
 
   const server = new RaftServer(nodeInfo, DEFAULT_CLUSTER);
   await server.start();
@@ -61,7 +59,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    await startServer(nodeId, nodeInfo.port);
+    await startServer(nodeId, nodeInfo.port, nodeInfo.host);
   } else if (mode === 'client') {
     await startClient();
   } else {
