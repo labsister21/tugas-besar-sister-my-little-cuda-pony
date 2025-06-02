@@ -17,7 +17,7 @@ import {
 export class RaftNode extends EventEmitter {
   private currentTerm: number = 0;
   private votedFor: string | null = null;
-  private logEntries: LogEntry[] = []; 
+  private logEntries: LogEntry[] = [];
   private commitIndex: number = -1;
   private lastApplied: number = -1;
   private state: NodeState = NodeState.FOLLOWER;
@@ -29,7 +29,7 @@ export class RaftNode extends EventEmitter {
   private keyValueStore: Map<string, string> = new Map();
   private votes: Set<string> = new Set();
   private commandResults: Map<number, any> = new Map();
-  
+
   private static readonly HEARTBEAT_INTERVAL = 100; // 100ms
   private static readonly MIN_ELECTION_TIMEOUT = 300; // 300ms
   private static readonly MAX_ELECTION_TIMEOUT = 500; // 500ms
@@ -52,10 +52,10 @@ export class RaftNode extends EventEmitter {
     if (this.electionTimeout) {
       clearTimeout(this.electionTimeout);
     }
-    
-    const timeout = RaftNode.MIN_ELECTION_TIMEOUT + 
+
+    const timeout = RaftNode.MIN_ELECTION_TIMEOUT +
       Math.random() * (RaftNode.MAX_ELECTION_TIMEOUT - RaftNode.MIN_ELECTION_TIMEOUT);
-    
+
     this.electionTimeout = setTimeout(() => {
       if (this.state !== NodeState.LEADER) {
         this.startElection();
@@ -75,7 +75,7 @@ export class RaftNode extends EventEmitter {
     this.votes.clear();
     this.votes.add(this.nodeInfo.id);
     this.leaderId = null; // Clear leader when starting election
-    
+
     this.log(`Starting election for term ${this.currentTerm}`);
     this.resetElectionTimeout();
 
@@ -95,7 +95,7 @@ export class RaftNode extends EventEmitter {
 
     try {
       await Promise.allSettled(votePromises);
-      
+
       // Check if we're still a candidate and haven't been superseded
       if (this.state !== NodeState.CANDIDATE) {
         return;
@@ -158,7 +158,7 @@ export class RaftNode extends EventEmitter {
 
     this.state = NodeState.LEADER;
     this.leaderId = this.nodeInfo.id;
-    
+
     if (this.electionTimeout) {
       clearTimeout(this.electionTimeout);
       this.electionTimeout = null;
@@ -169,7 +169,7 @@ export class RaftNode extends EventEmitter {
     // Initialize leader state
     this.nextIndex.clear();
     this.matchIndex.clear();
-    
+
     for (const node of this.clusterNodes) {
       if (node.id !== this.nodeInfo.id) {
         this.nextIndex.set(node.id, this.logEntries.length);
@@ -239,12 +239,12 @@ export class RaftNode extends EventEmitter {
         this.votedFor = null;
         this.leaderId = null;
         this.resetElectionTimeout();
-        
+
         if (this.heartbeatInterval) {
           clearInterval(this.heartbeatInterval);
           this.heartbeatInterval = null;
         }
-        
+
         this.log(`Stepping down as leader due to higher term ${response.data.term} from ${node.id}`);
       } else if (response.data.success) {
         this.nextIndex.set(node.id, nextIndex + entries.length);
@@ -266,7 +266,7 @@ export class RaftNode extends EventEmitter {
     for (let n = this.commitIndex + 1; n < this.logEntries.length; n++) {
       if (this.logEntries[n].term === this.currentTerm) {
         let count = 1; // Count self
-        
+
         for (const [nodeId, matchIndex] of this.matchIndex) {
           if (matchIndex >= n) count++;
         }
@@ -284,8 +284,8 @@ export class RaftNode extends EventEmitter {
     while (this.lastApplied < this.commitIndex) {
       this.lastApplied++;
       const entry = this.logEntries[this.lastApplied];
-      const result = this.applyCommand(entry.command); 
-      this.commandResults.set(entry.index, result); 
+      const result = this.applyCommand(entry.command);
+      this.commandResults.set(entry.index, result);
     }
   }
 
@@ -295,31 +295,31 @@ export class RaftNode extends EventEmitter {
         this.keyValueStore.set(command.key!, command.value!);
         this.log(`Applied SET ${command.key} = ${command.value}`);
         return 'OK';
-      
+
       case 'GET':
         const getValue = this.keyValueStore.get(command.key!) || '';
         return getValue;
-      
+
       case 'DEL':
         const deletedValue = this.keyValueStore.get(command.key!) || '';
         this.keyValueStore.delete(command.key!);
         this.log(`Applied DEL ${command.key}`);
         return deletedValue;
-      
+
       case 'APPEND':
         const currentValue = this.keyValueStore.get(command.key!) || '';
         const newValue = currentValue + command.value!;
         this.keyValueStore.set(command.key!, newValue);
         this.log(`Applied APPEND ${command.key} += ${command.value}`);
         return 'OK';
-      
+
       case 'STRLN':
         const strValue = this.keyValueStore.get(command.key!) || '';
         return strValue.length;
-      
+
       case 'PING':
         return 'PONG';
-        
+
       // New membership change commands
       case 'ADD_NODE':
         if (command.nodeInfo) {
@@ -328,7 +328,7 @@ export class RaftNode extends EventEmitter {
           return 'OK';
         }
         throw new Error('Invalid ADD_NODE command');
-        
+
       case 'REMOVE_NODE':
         if (command.nodeId) {
           this.applyRemoveNode(command.nodeId);
@@ -336,7 +336,7 @@ export class RaftNode extends EventEmitter {
           return 'OK';
         }
         throw new Error('Invalid REMOVE_NODE command');
-      
+
       default:
         throw new Error(`Unknown command type: ${command.type}`);
     }
@@ -382,13 +382,13 @@ export class RaftNode extends EventEmitter {
       this.votedFor = null;
       this.state = NodeState.FOLLOWER;
       this.leaderId = null;
-      
+
       // Clear leader-specific timeouts
       if (this.heartbeatInterval) {
         clearInterval(this.heartbeatInterval);
         this.heartbeatInterval = null;
       }
-      
+
       this.resetElectionTimeout();
       this.log(`Updated term to ${this.currentTerm} due to vote request from ${request.candidateId}`);
     }
@@ -397,15 +397,15 @@ export class RaftNode extends EventEmitter {
     const lastLogTerm = lastLogIndex >= 0 ? this.logEntries[lastLogIndex].term : 0;
 
     // Check if candidate's log is at least as up-to-date as ours
-    const logUpToDate = request.lastLogTerm > lastLogTerm || 
+    const logUpToDate = request.lastLogTerm > lastLogTerm ||
       (request.lastLogTerm === lastLogTerm && request.lastLogIndex >= lastLogIndex);
 
     // Grant vote if:
     // 1. Request is for current term
     // 2. We haven't voted for anyone else in this term
     // 3. Candidate's log is up-to-date
-    const voteGranted = request.term === this.currentTerm && 
-      (this.votedFor === null || this.votedFor === request.candidateId) && 
+    const voteGranted = request.term === this.currentTerm &&
+      (this.votedFor === null || this.votedFor === request.candidateId) &&
       logUpToDate;
 
     if (voteGranted) {
@@ -429,7 +429,7 @@ export class RaftNode extends EventEmitter {
       this.votedFor = null;
       this.state = NodeState.FOLLOWER;
       this.leaderId = null;
-      
+
       // Clear any ongoing election
       if (this.heartbeatInterval) {
         clearInterval(this.heartbeatInterval);
@@ -442,7 +442,7 @@ export class RaftNode extends EventEmitter {
       this.state = NodeState.FOLLOWER;
       this.leaderId = request.leaderId;
       this.resetElectionTimeout();
-      
+
       // Clear any ongoing election/heartbeat if we were candidate/leader
       if (this.heartbeatInterval) {
         clearInterval(this.heartbeatInterval);
@@ -456,9 +456,9 @@ export class RaftNode extends EventEmitter {
     }
 
     // Check log consistency
-    if (request.prevLogIndex >= 0 && 
-        (this.logEntries.length <= request.prevLogIndex || 
-         this.logEntries[request.prevLogIndex].term !== request.prevLogTerm)) {
+    if (request.prevLogIndex >= 0 &&
+      (this.logEntries.length <= request.prevLogIndex ||
+        this.logEntries[request.prevLogIndex].term !== request.prevLogTerm)) {
       return { term: this.currentTerm, success: false };
     }
 
@@ -493,7 +493,7 @@ export class RaftNode extends EventEmitter {
     if (command.type === 'GET' || command.type === 'STRLN') {
       return this.executeReadCommand(command);
     }
-    
+
     // PING can be executed immediately
     if (command.type === 'PING') {
       return this.applyCommand(command);
@@ -516,10 +516,10 @@ export class RaftNode extends EventEmitter {
 
   private async executeReadCommand(command: Command): Promise<any> {
     const readIndex = this.commitIndex;
-    
+
     // Send heartbeat to confirm leadership
     await this.confirmLeadership();
-    
+
     // Apply the read command
     return this.applyCommand(command);
   }
@@ -535,7 +535,7 @@ export class RaftNode extends EventEmitter {
 
     const results = await Promise.allSettled(promises);
     const successCount = results.filter(result => result.status === 'fulfilled').length + 1; // +1 for self
-    
+
     const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
     if (successCount < majorityNeeded) {
       throw new Error('Lost leadership - cannot confirm majority');
@@ -569,16 +569,16 @@ export class RaftNode extends EventEmitter {
 
   private waitForCommitment(entry: LogEntry): Promise<any> {
     return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => { 
-        this.commandResults.delete(entry.index); 
+      const timeoutId = setTimeout(() => {
+        this.commandResults.delete(entry.index);
         reject(new Error(`Command timeout for entry index ${entry.index}`));
       }, 5000);
 
       const checkApplied = () => {
-        if (this.lastApplied >= entry.index) { 
+        if (this.lastApplied >= entry.index) {
           clearTimeout(timeoutId);
           const result = this.commandResults.get(entry.index);
-          this.commandResults.delete(entry.index); 
+          this.commandResults.delete(entry.index);
           resolve(result);
         } else if (this.state !== NodeState.LEADER) {
           clearTimeout(timeoutId);
