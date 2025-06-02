@@ -12,7 +12,7 @@ export interface LogEntry {
 }
 
 export interface Command {
-  type: 'SET' | 'DEL' | 'APPEND' | 'PING' | 'GET' | 'STRLN' | 'ADD_NODE' | 'REMOVE_NODE';
+  type: 'SET' | 'DEL' | 'APPEND' | 'PING' | 'GET' | 'STRLN' | 'ADD_NODE' | 'REMOVE_NODE' | 'REQUEST_LOG';
   key?: string;
   value?: string;
   nodeInfo?: NodeInfo;

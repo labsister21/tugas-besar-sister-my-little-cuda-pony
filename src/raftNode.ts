@@ -351,6 +351,9 @@ export class RaftNode extends EventEmitter {
         }
         throw new Error('Invalid REMOVE_NODE command');
 
+      case 'REQUEST_LOG':
+        return this.getLog();
+
       default:
         throw new Error(`Unknown command type: ${command.type}`);
     }
@@ -503,7 +506,7 @@ export class RaftNode extends EventEmitter {
     }
 
     // For read-only commands, use read index for stronger consistency
-    if (command.type === 'GET' || command.type === 'STRLN') {
+    if (command.type === 'GET' || command.type === 'STRLN' || command.type === 'REQUEST_LOG') {
       return this.executeReadCommand(command);
     }
 

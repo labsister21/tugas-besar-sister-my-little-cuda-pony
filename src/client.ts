@@ -1,6 +1,6 @@
 import axios from 'axios';
 import readline from 'readline';
-import { NodeInfo, Command, ClientResponse } from './types';
+import { NodeInfo, Command, ClientResponse, LogEntry } from './types';
 
 export class RaftClient {
   private clusterNodes: NodeInfo[];
@@ -82,7 +82,7 @@ export class RaftClient {
     });
 
     console.log('Raft KV Store Client');
-    console.log('Available commands: ping, get <key>, set <key> <value>, strln <key>, del <key>, append <key> <value>');
+    console.log('Available commands: ping, get <key>, set <key> <value>, strln <key>, del <key>, append <key> <value>, request_log');
     console.log('Type "exit" to quit');
 
     const promptUser = () => {
@@ -146,6 +146,14 @@ export class RaftClient {
               const appendValue = parts.slice(2).join(' ');
               await this.executeCommand({ type: 'APPEND', key: parts[1], value: appendValue });
               console.log('OK');
+              break;
+
+            case 'request_log':
+              const logs = await this.executeCommand({ type: 'REQUEST_LOG' });
+              console.log('Logs from leader:');
+              logs.forEach((log: LogEntry, index: number) => {
+                console.log(`[${index}] Term: ${log.term}, Command: ${JSON.stringify(log.command)}, Timestamp: ${new Date(log.timestamp).toISOString()}`);
+              });
               break;
 
             default:
