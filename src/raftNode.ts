@@ -64,7 +64,6 @@ export class RaftNode extends EventEmitter {
   }
 
   private async startElection(): Promise<void> {
-    // Only start election if we're not already a leader
     if (this.state === NodeState.LEADER) {
       return;
     }
@@ -74,7 +73,7 @@ export class RaftNode extends EventEmitter {
     this.votedFor = this.nodeInfo.id;
     this.votes.clear();
     this.votes.add(this.nodeInfo.id);
-    this.leaderId = null; // Clear leader when starting election
+    this.leaderId = null;
 
     this.log(`Starting election for term ${this.currentTerm}`);
     this.resetElectionTimeout();
@@ -89,6 +88,22 @@ export class RaftNode extends EventEmitter {
       lastLogTerm
     };
 
+    const activeNodes = new Set([this.nodeInfo.id]);
+    const newClusterNodes: NodeInfo[] = [this.nodeInfo];
+    for (const node of this.clusterNodes) {
+      if (node.id !== this.nodeInfo.id) {
+        try {
+          await axios.get(`http://${node.host}:${node.port}/health`, { timeout: 100 });
+          activeNodes.add(node.id);
+          newClusterNodes.push(node);
+        } catch (error) {
+          this.log(`Node ${node.id} is down and will be removed from cluster`);
+        }
+      }
+    }
+
+    this.clusterNodes = newClusterNodes;
+
     const votePromises = this.clusterNodes
       .filter(node => node.id !== this.nodeInfo.id)
       .map(node => this.requestVote(node, voteRequest));
@@ -96,24 +111,21 @@ export class RaftNode extends EventEmitter {
     try {
       await Promise.allSettled(votePromises);
 
-      // Check if we're still a candidate and haven't been superseded
       if (this.state !== NodeState.CANDIDATE) {
         return;
       }
 
-      const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
+      const majorityNeeded = Math.floor(activeNodes.size / 2) + 1;
       if (this.votes.size >= majorityNeeded) {
         this.becomeLeader();
       } else {
-        // If we didn't get majority, revert to follower
         this.state = NodeState.FOLLOWER;
         this.votedFor = null;
         this.resetElectionTimeout();
-        this.log(`Election failed - only got ${this.votes.size} votes, needed ${majorityNeeded}`);
+        this.log(`Election failed - only got ${this.votes.size} votes, needed ${majorityNeeded} from ${activeNodes.size} active nodes`);
       }
     } catch (error) {
       this.log(`Election error: ${error}`);
-      // Revert to follower on election failure
       this.state = NodeState.FOLLOWER;
       this.votedFor = null;
       this.resetElectionTimeout();
@@ -128,7 +140,6 @@ export class RaftNode extends EventEmitter {
         { timeout: RaftNode.VOTE_REQUEST_TIMEOUT }
       );
 
-      // Check if we're still a candidate and our term is still current
       if (this.state !== NodeState.CANDIDATE || this.currentTerm !== request.term) {
         return;
       }
@@ -145,13 +156,11 @@ export class RaftNode extends EventEmitter {
         this.log(`Received vote from ${node.id} (${this.votes.size}/${this.clusterNodes.length})`);
       }
     } catch (error) {
-      // Node is unreachable - this is expected in failure scenarios
       this.log(`Failed to get vote from ${node.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   private becomeLeader(): void {
-    // Double-check we're still a candidate
     if (this.state !== NodeState.CANDIDATE) {
       return;
     }
@@ -166,7 +175,6 @@ export class RaftNode extends EventEmitter {
 
     this.log(`Became leader for term ${this.currentTerm}`);
 
-    // Initialize leader state
     this.nextIndex.clear();
     this.matchIndex.clear();
 
@@ -189,7 +197,6 @@ export class RaftNode extends EventEmitter {
       if (this.state === NodeState.LEADER) {
         this.sendHeartbeats();
       } else {
-        // Clear heartbeat if no longer leader
         if (this.heartbeatInterval) {
           clearInterval(this.heartbeatInterval);
           this.heartbeatInterval = null;
@@ -228,7 +235,6 @@ export class RaftNode extends EventEmitter {
         { timeout: 50 }
       );
 
-      // Check if we're still the leader
       if (this.state !== NodeState.LEADER) {
         return;
       }
@@ -251,7 +257,6 @@ export class RaftNode extends EventEmitter {
         this.matchIndex.set(node.id, nextIndex + entries.length - 1);
         this.updateCommitIndex();
       } else {
-        // Log inconsistency - decrease nextIndex
         this.nextIndex.set(node.id, Math.max(0, nextIndex - 1));
       }
     } catch (error) {
@@ -263,15 +268,25 @@ export class RaftNode extends EventEmitter {
   private updateCommitIndex(): void {
     if (this.state !== NodeState.LEADER) return;
 
+    const activeNodes = new Set([this.nodeInfo.id]);
+    for (const node of this.clusterNodes) {
+      try {
+        axios.get(`http://${node.host}:${node.port}/health`, { timeout: 100 });
+        activeNodes.add(node.id);
+      } catch (error) {
+        // Node is considered down
+      }
+    }
+
     for (let n = this.commitIndex + 1; n < this.logEntries.length; n++) {
       if (this.logEntries[n].term === this.currentTerm) {
         let count = 1; // Count self
 
         for (const [nodeId, matchIndex] of this.matchIndex) {
-          if (matchIndex >= n) count++;
+          if (matchIndex >= n && activeNodes.has(nodeId)) count++;
         }
 
-        const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
+        const majorityNeeded = Math.floor(activeNodes.size / 2) + 1;
         if (count >= majorityNeeded) {
           this.commitIndex = n;
           this.applyCommittedEntries();
@@ -320,7 +335,6 @@ export class RaftNode extends EventEmitter {
       case 'PING':
         return 'PONG';
 
-      // New membership change commands
       case 'ADD_NODE':
         if (command.nodeInfo) {
           this.applyAddNode(command.nodeInfo);
@@ -343,7 +357,6 @@ export class RaftNode extends EventEmitter {
   }
 
   private applyAddNode(nodeInfo: NodeInfo): void {
-    // Only add if not already in cluster
     if (!this.clusterNodes.find(node => node.id === nodeInfo.id)) {
       this.clusterNodes.push(nodeInfo);
       if (this.state === NodeState.LEADER) {
