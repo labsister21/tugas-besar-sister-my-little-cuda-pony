@@ -88,23 +88,26 @@ export class RaftNode extends EventEmitter {
       lastLogTerm
     };
 
-    const activeNodes = new Set([this.nodeInfo.id]);
-    const newClusterNodes: NodeInfo[] = [this.nodeInfo];
-    for (const node of this.clusterNodes) {
-      if (node.id !== this.nodeInfo.id) {
+    const nodesToRequestVoteFrom: NodeInfo[] = [];
+    const healthCheckPromises = this.clusterNodes
+      .filter(node => node.id !== this.nodeInfo.id)
+      .map(async (node) => {
         try {
-          await axios.get(`http://${node.host}:${node.port}/health`, { timeout: 100 });
-          activeNodes.add(node.id);
-          newClusterNodes.push(node);
+          // Perform a quick health check or assume reachable if not explicitly removing.
+          // For simplicity here, we'll try to request from all configured nodes.
+          // A more optimized approach might skip nodes known to be down for a long time,
+          // but the quorum MUST be based on this.clusterNodes.length.
+          nodesToRequestVoteFrom.push(node);
         } catch (error) {
-          this.log(`Node ${node.id} is down and will be removed from cluster`);
+          this.log(`Node ${node.id} might be down, but will still be part of quorum calculation.`);
         }
-      }
-    }
+      });
+    
+    // For this fix, we will attempt to request votes from all other configured nodes.
+    // The original health check logic that modified this.clusterNodes is removed.
+    // await Promise.allSettled(healthCheckPromises); // This was part of the removed logic
 
-    this.clusterNodes = newClusterNodes;
-
-    const votePromises = this.clusterNodes
+    const votePromises = this.clusterNodes // Iterate over the definitive cluster list
       .filter(node => node.id !== this.nodeInfo.id)
       .map(node => this.requestVote(node, voteRequest));
 
@@ -115,14 +118,15 @@ export class RaftNode extends EventEmitter {
         return;
       }
 
-      const majorityNeeded = Math.floor(activeNodes.size / 2) + 1;
+      // Majority is based on the total number of nodes in the configured cluster.
+      const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
       if (this.votes.size >= majorityNeeded) {
         this.becomeLeader();
       } else {
         this.state = NodeState.FOLLOWER;
         this.votedFor = null;
         this.resetElectionTimeout();
-        this.log(`Election failed - only got ${this.votes.size} votes, needed ${majorityNeeded} from ${activeNodes.size} active nodes`);
+        this.log(`Election failed - only got ${this.votes.size} votes, needed ${majorityNeeded} from ${this.clusterNodes.length} configured nodes`);
       }
     } catch (error) {
       this.log(`Election error: ${error}`);
@@ -268,28 +272,26 @@ export class RaftNode extends EventEmitter {
   private updateCommitIndex(): void {
     if (this.state !== NodeState.LEADER) return;
 
-    const activeNodes = new Set([this.nodeInfo.id]);
-    for (const node of this.clusterNodes) {
-      try {
-        axios.get(`http://${node.host}:${node.port}/health`, { timeout: 100 });
-        activeNodes.add(node.id);
-      } catch (error) {
-        // Node is considered down
-      }
-    }
+    const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
 
     for (let n = this.commitIndex + 1; n < this.logEntries.length; n++) {
       if (this.logEntries[n].term === this.currentTerm) {
-        let count = 1; // Count self
+        let count = 1; // Count self (the leader)
 
-        for (const [nodeId, matchIndex] of this.matchIndex) {
-          if (matchIndex >= n && activeNodes.has(nodeId)) count++;
+        for (const node of this.clusterNodes) {
+          if (node.id !== this.nodeInfo.id) {
+            const matchedIndexForNode = this.matchIndex.get(node.id);
+            if (matchedIndexForNode !== undefined && matchedIndexForNode >= n) {
+              count++;
+            }
+          }
         }
-
-        const majorityNeeded = Math.floor(activeNodes.size / 2) + 1;
+        
         if (count >= majorityNeeded) {
           this.commitIndex = n;
+          this.log(`Commit index updated to ${this.commitIndex}. Replicated on ${count}/${this.clusterNodes.length} nodes.`);
           this.applyCommittedEntries();
+        } else {
         }
       }
     }
