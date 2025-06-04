@@ -131,10 +131,6 @@ export class RaftNode extends EventEmitter {
       .filter((node) => node.id !== this.nodeInfo.id)
       .map(async (node) => {
         try {
-          // Perform a quick health check or assume reachable if not explicitly removing.
-          // For simplicity here, we'll try to request from all configured nodes.
-          // A more optimized approach might skip nodes known to be down for a long time,
-          // but the quorum MUST be based on this.clusterNodes.length.
           nodesToRequestVoteFrom.push(node);
         } catch (error) {
           this.log(
@@ -143,9 +139,6 @@ export class RaftNode extends EventEmitter {
         }
       });
 
-    // For this fix, we will attempt to request votes from all other configured nodes.
-    // The original health check logic that modified this.clusterNodes is removed.
-    // await Promise.allSettled(healthCheckPromises); // This was part of the removed logic
 
     const votePromises = this.clusterNodes // Iterate over the definitive cluster list
       .filter((node) => node.id !== this.nodeInfo.id)
@@ -616,9 +609,9 @@ export class RaftNode extends EventEmitter {
     };
   }
 
-  public handleAppendEntries(
+  public async handleAppendEntries(
     request: AppendEntriesRequest
-  ): AppendEntriesResponse {
+  ): Promise<AppendEntriesResponse> {
     if (request.term > this.currentTerm) {
       this.currentTerm = request.term;
       this.votedFor = null;
@@ -630,9 +623,11 @@ export class RaftNode extends EventEmitter {
         this.heartbeatInterval = null;
       }
 
-      this.persistentStorage
-        .saveState(this.currentTerm, this.votedFor)
-        .catch((error) => this.log(`Failed to save state: ${error}`));
+      try { 
+        await this.persistentStorage.saveState(this.currentTerm, this.votedFor);
+      } catch (error) {
+        this.log(`Failed to save state: ${error}`);
+      }
     }
 
     if (request.term === this.currentTerm) {
@@ -652,76 +647,119 @@ export class RaftNode extends EventEmitter {
 
     // Handle snapshot installation
     if (request.snapshot) {
-      if (request.prevLogIndex <= this.lastSnapshotIndex) {
+      if (request.prevLogIndex <= this.lastSnapshotIndex && this.lastSnapshotIndex !== -1 && request.snapshot.lastIncludedIndex <= this.lastSnapshotIndex) {
+        this.log(`Received snapshot for index ${request.snapshot.lastIncludedIndex}, but already have up to ${this.lastSnapshotIndex}. Ignoring.`);
         return { term: this.currentTerm, success: true }; // Already have this snapshot or newer
       }
 
+      this.log(`Installing snapshot. Last included index: ${request.snapshot.lastIncludedIndex}, term: ${request.snapshot.lastIncludedTerm}`);
       this.keyValueStore = new Map(Object.entries(request.snapshot.data));
       this.lastSnapshotIndex = request.snapshot.lastIncludedIndex;
       this.lastSnapshotTerm = request.snapshot.lastIncludedTerm;
-      this.commitIndex = request.snapshot.lastIncludedIndex;
-      this.lastApplied = request.snapshot.lastIncludedIndex;
+      this.commitIndex = Math.max(this.commitIndex, request.snapshot.lastIncludedIndex); // Ensure commitIndex is at least snapshot index
+      this.lastApplied = Math.max(this.lastApplied, request.snapshot.lastIncludedIndex); // Ensure lastApplied is at least snapshot index
+      
+      // Discard log entries covered by the snapshot
       this.logEntries = this.logEntries.filter(
         (entry) => entry.index > this.lastSnapshotIndex
       );
 
-      this.persistentStorage
-        .saveSnapshot(request.snapshot)
-        .catch((error) => this.log(`Failed to save snapshot: ${error}`));
-      this.persistentStorage
-        .saveLog(this.logEntries)
-        .catch((error) => this.log(`Failed to save log: ${error}`));
+      try { 
+        await this.persistentStorage.saveSnapshot(request.snapshot);
+        await this.persistentStorage.saveLog(this.logEntries); // Also save the (potentially empty) log
+        this.log(`Snapshot installed and log trimmed up to index ${this.lastSnapshotIndex}`);
+      } catch (error) {
+        this.log(`Failed to save snapshot or log after snapshot installation: ${error}`);
+        return { term: this.currentTerm, success: false }; // Indicate failure
+      }
 
       return { term: this.currentTerm, success: true };
     }
 
     // Check log consistency
     if (request.prevLogIndex >= 0) {
-      if (request.prevLogIndex <= this.lastSnapshotIndex) {
-        if (request.prevLogTerm !== this.lastSnapshotTerm) {
+      if (request.prevLogIndex > this.lastSnapshotIndex + this.logEntries.length) {
+         this.log(`Rejecting AppendEntries: prevLogIndex ${request.prevLogIndex} is beyond current log length ${this.lastSnapshotIndex + this.logEntries.length}`);
+        return { term: this.currentTerm, success: false };
+      }
+      if (request.prevLogIndex === this.lastSnapshotIndex) {
+        if (this.lastSnapshotIndex !== -1 && request.prevLogTerm !== this.lastSnapshotTerm) {
+          this.log(`Rejecting AppendEntries: prevLogTerm ${request.prevLogTerm} at index ${request.prevLogIndex} (snapshot boundary) does not match follower's lastSnapshotTerm ${this.lastSnapshotTerm}`);
           return { term: this.currentTerm, success: false };
         }
-      } else if (
-        this.logEntries.length + this.lastSnapshotIndex <
-          request.prevLogIndex ||
-        this.logEntries[request.prevLogIndex - this.lastSnapshotIndex - 1]
-          ?.term !== request.prevLogTerm
-      ) {
+      } else if (request.prevLogIndex > this.lastSnapshotIndex) {
+         const localEntryArrayIndex = request.prevLogIndex - this.lastSnapshotIndex - 1;
+         if (localEntryArrayIndex < 0 || localEntryArrayIndex >= this.logEntries.length || this.logEntries[localEntryArrayIndex]?.term !== request.prevLogTerm) {
+            this.log(`Rejecting AppendEntries: Log inconsistency at prevLogIndex ${request.prevLogIndex}. Follower's term: ${this.logEntries[localEntryArrayIndex]?.term}, Leader's term: ${request.prevLogTerm}`);
+            return { term: this.currentTerm, success: false };
+         }
+      }
+    }
+
+
+    // Append new entries
+    let newEntriesPersisted = false;
+    if (request.entries && request.entries.length > 0) {
+      let currentLogArrayIndex: number;
+
+      if (request.prevLogIndex < this.lastSnapshotIndex) {
+          currentLogArrayIndex = 0;
+      } else {
+          currentLogArrayIndex = request.prevLogIndex - this.lastSnapshotIndex;
+      }
+
+      for (const entry of request.entries) {
+        // At this point, currentLogArrayIndex is the target array index for 'entry'.
+
+        // Sanity check: does entry.index match what we expect for this currentLogArrayIndex?
+        const expectedAbsoluteIndexForThisSlot = this.lastSnapshotIndex + 1 + currentLogArrayIndex;
+        if (expectedAbsoluteIndexForThisSlot !== entry.index) {
+            this.log(`Error: Mismatch between calculated absolute index ${expectedAbsoluteIndexForThisSlot} for slot ${currentLogArrayIndex} and entry's given index ${entry.index}.`);
+            this.log(`Details: request.prevLogIndex=${request.prevLogIndex}, follower.lastSnapshotIndex=${this.lastSnapshotIndex}, follower.logEntries.length=${this.logEntries.length}`);
+            return { term: this.currentTerm, success: false };
+        }
+
+        if (currentLogArrayIndex < this.logEntries.length) {
+          // Entry slot exists: conflict or already matches
+          if (this.logEntries[currentLogArrayIndex].term !== entry.term) {
+            this.log(`Conflict at absolute index ${entry.index} (array index ${currentLogArrayIndex}). Truncating log from this point.`);
+            this.logEntries = this.logEntries.slice(0, currentLogArrayIndex); // Truncate
+            this.logEntries.push(entry); // Add the new entry
+            newEntriesPersisted = true;
+          }
+          // If terms match, entry is already there, do nothing.
+        } else {
+          // Entry is at the end of the log or implies a gap.
+          if (currentLogArrayIndex === this.logEntries.length) {
+            // This is a direct append, no gap.
+            this.logEntries.push(entry);
+            newEntriesPersisted = true;
+          } else {
+            this.log(`Error: Gap detected when trying to append. Target array index ${currentLogArrayIndex}, log length ${this.logEntries.length}. Absolute index ${entry.index}.`);
+            return { term: this.currentTerm, success: false };
+          }
+        }
+        currentLogArrayIndex++; // Increment for the next entry in request.entries
+      }
+    }
+
+    // Persist logs if they were modified
+    if (newEntriesPersisted) {
+      try { 
+        await this.persistentStorage.saveLog(this.logEntries);
+        this.log(`Appended ${request.entries?.length || 0} entries. Log persisted.`);
+      } catch (error) {
+        this.log(`Failed to save log after appending entries: ${error}`);
         return { term: this.currentTerm, success: false };
       }
     }
 
-    // Append new entries
-    let index = request.prevLogIndex + 1;
-    for (const entry of request.entries) {
-      if (index <= this.lastSnapshotIndex) {
-        index++;
-        continue;
-      }
-      const logIndex = index - this.lastSnapshotIndex - 1;
-      if (
-        logIndex < this.logEntries.length &&
-        this.logEntries[logIndex].term !== entry.term
-      ) {
-        this.logEntries = this.logEntries.slice(0, logIndex);
-      }
-      if (logIndex >= this.logEntries.length) {
-        this.logEntries.push({ ...entry, index });
-      }
-      index++;
-    }
-
-    // Persist logs
-    this.persistentStorage
-      .saveLog(this.logEntries)
-      .catch((error) => this.log(`Failed to save log: ${error}`));
-
-    // Update commit index
     if (request.leaderCommit > this.commitIndex) {
       this.commitIndex = Math.min(
         request.leaderCommit,
-        this.lastSnapshotIndex + this.logEntries.length
+        this.lastSnapshotIndex + this.logEntries.length // Index of the last known entry
       );
+      this.log(`Follower commitIndex updated to ${this.commitIndex}`);
       this.applyCommittedEntries();
     }
 
@@ -753,10 +791,14 @@ export class RaftNode extends EventEmitter {
     };
 
     this.logEntries.push(entry);
-    this.persistentStorage
-      .saveLog(this.logEntries)
-      .catch((error) => this.log(`Failed to save log: ${error}`));
-    this.log(`Added log entry: ${JSON.stringify(command)}`);
+    try {
+      await this.persistentStorage.saveLog(this.logEntries); 
+      this.log(`Added log entry: ${JSON.stringify(command)} and persisted.`);
+    } catch (error) {
+      this.log(`Failed to save log: ${error}. Command will not be processed.`);
+      this.logEntries.pop(); 
+      throw new Error(`Failed to persist log entry: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     return this.waitForCommitment(entry);
   }

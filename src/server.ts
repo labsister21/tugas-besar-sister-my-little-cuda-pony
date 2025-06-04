@@ -23,15 +23,15 @@ export class RaftServer {
   }
 
   private setupRoutes(): void {
-    this.app.post('/raft/vote', (req: Request, res: Response) => {
-      const response = this.raftNode.handleVoteRequest(req.body);
+    this.app.post('/raft/vote', asyncHandler(async (req: Request, res: Response) => { 
+      const response = await this.raftNode.handleVoteRequest(req.body); 
       res.json(response);
-    });
+    }));
 
-    this.app.post('/raft/append', (req: Request, res: Response) => {
-      const response = this.raftNode.handleAppendEntries(req.body);
+    this.app.post('/raft/append', asyncHandler(async (req: Request, res: Response) => { 
+      const response = await this.raftNode.handleAppendEntries(req.body); 
       res.json(response);
-    });
+    }));
 
     this.app.post('/execute', asyncHandler(async (req: Request, res: Response) => {
       if (this.raftNode.getState() !== 'LEADER') {
