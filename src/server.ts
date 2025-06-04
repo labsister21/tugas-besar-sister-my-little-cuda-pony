@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { RaftNode } from './raftNode';
 import { NodeInfo, Command, ClientRequest, ClientResponse } from './types';
+import { PersistentStorage } from './persistentStorage';
 
 const asyncHandler = (fn: (req: Request, res: Response, next: NextFunction) => Promise<any>) => {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -11,11 +12,13 @@ const asyncHandler = (fn: (req: Request, res: Response, next: NextFunction) => P
 export class RaftServer {
   private app: express.Application;
   private raftNode: RaftNode;
+  private persistentStorage: PersistentStorage;
 
   constructor(nodeInfo: NodeInfo, clusterNodes: NodeInfo[]) {
     this.app = express();
     this.app.use(express.json());
     this.raftNode = new RaftNode(nodeInfo, clusterNodes);
+    this.persistentStorage = new PersistentStorage(nodeInfo.id);
     this.setupRoutes();
   }
 
@@ -67,6 +70,24 @@ export class RaftServer {
         data: this.raftNode.getLog()
       });
     });
+
+    this.app.get('/snapshot', asyncHandler(async (req: Request, res: Response) => {
+      if (this.raftNode.getState() !== 'LEADER') {
+        const leaderInfo = this.raftNode.getLeaderInfo();
+        res.status(400).json({
+          success: false,
+          error: 'Not a leader',
+          leaderInfo
+        });
+        return;
+      }
+
+      const snapshot = await this.persistentStorage.loadSnapshot();
+      res.json({
+        success: true,
+        data: snapshot
+      });
+    }));
 
     this.app.post('/cluster/add', asyncHandler(async (req: Request, res: Response) => {
       if (this.raftNode.getState() !== 'LEADER') {

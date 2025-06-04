@@ -11,6 +11,12 @@ export interface LogEntry {
   timestamp: number;
 }
 
+export interface Snapshot {
+  lastIncludedIndex: number;
+  lastIncludedTerm: number;
+  data: { [key: string]: string };
+}
+
 export interface Command {
   type: 'SET' | 'DEL' | 'APPEND' | 'PING' | 'GET' | 'STRLN' | 'ADD_NODE' | 'REMOVE_NODE' | 'REQUEST_LOG';
   key?: string;
@@ -44,6 +50,7 @@ export interface AppendEntriesRequest {
   prevLogTerm: number;
   entries: LogEntry[];
   leaderCommit: number;
+  snapshot?: Snapshot;
 }
 
 export interface AppendEntriesResponse {
