@@ -41,16 +41,27 @@ export class RaftClient {
     throw new Error('No leader found');
   }
 
-  private async executeCommand(command: Command): Promise<any> {
+  private async executeCommand(command: Command, targetNodeId?: string): Promise<any> {
     try {
-      const leader = await this.findLeader();
+      let targetNode: NodeInfo;
+
+      if (targetNodeId) {
+        const node = this.clusterNodes.find(n => n.id === targetNodeId);
+        if (!node) {
+          throw new Error(`Node ${targetNodeId} not found in cluster`);
+        }
+        targetNode = node;
+      } else {
+        targetNode = await this.findLeader();
+      }
+
       const response = await axios.post<ClientResponse>(
-        `http://${leader.host}:${leader.port}/execute`,
+        `http://${targetNode.host}:${targetNode.port}/execute`,
         { command }
       );
 
       if (response.status === 302) {
-        // Redirect to leader
+        // redirect to leader
         if (response.data.leaderInfo) {
           this.currentLeader = response.data.leaderInfo;
           return this.executeCommand(command);
@@ -82,13 +93,25 @@ export class RaftClient {
     });
 
     console.log('Raft KV Store Client');
-    console.log('Available commands: ping, get <key>, set <key> <value>, strln <key>, del <key>, append <key> <value>, request_log');
+    console.log('Available commands: [<nodeId>] ping, [<nodeId>] get <key>, [<nodeId>] set <key> <value>, [<nodeId>] strln <key>, [<nodeId>] del <key>, [<nodeId>] append <key> <value>, request_log');
     console.log('Type "exit" to quit');
 
     const promptUser = () => {
       rl.question('> ', async (input) => {
         const parts = input.trim().split(' ');
-        const commandType = parts[0].toLowerCase();
+        let targetNodeId: string | undefined;
+        let commandType: string;
+        let commandParts: string[];
+
+        // check if first argument is a nodeid
+        if (this.clusterNodes.some(node => node.id === parts[0])) {
+          targetNodeId = parts[0];
+          commandType = parts[1]?.toLowerCase() || '';
+          commandParts = parts.slice(2);
+        } else {
+          commandType = parts[0]?.toLowerCase() || '';
+          commandParts = parts.slice(1);
+        }
 
         try {
           switch (commandType) {
@@ -97,59 +120,59 @@ export class RaftClient {
               return;
 
             case 'ping':
-              const pongResult = await this.executeCommand({ type: 'PING' });
+              const pongResult = await this.executeCommand({ type: 'PING' }, targetNodeId);
               console.log(pongResult);
               break;
 
             case 'get':
-              if (parts.length < 2) {
-                console.log('Usage: get <key>');
+              if (commandParts.length < 1) {
+                console.log('Usage: [<nodeId>] get <key>');
                 break;
               }
-              const getValue = await this.executeCommand({ type: 'GET', key: parts[1] });
+              const getValue = await this.executeCommand({ type: 'GET', key: commandParts[0] }, targetNodeId);
               console.log(`"${getValue}"`);
               break;
 
             case 'set':
-              if (parts.length < 3) {
-                console.log('Usage: set <key> <value>');
+              if (commandParts.length < 2) {
+                console.log('Usage: [<nodeId>] set <key> <value>');
                 break;
               }
-              const setValue = parts.slice(2).join(' ');
-              await this.executeCommand({ type: 'SET', key: parts[1], value: setValue });
+              const setValue = commandParts.slice(1).join(' ');
+              await this.executeCommand({ type: 'SET', key: commandParts[0], value: setValue }, targetNodeId);
               console.log('OK');
               break;
 
             case 'strln':
-              if (parts.length < 2) {
-                console.log('Usage: strln <key>');
+              if (commandParts.length < 1) {
+                console.log('Usage: [<nodeId>] strln <key>');
                 break;
               }
-              const length = await this.executeCommand({ type: 'STRLN', key: parts[1] });
+              const length = await this.executeCommand({ type: 'STRLN', key: commandParts[0] }, targetNodeId);
               console.log(length);
               break;
 
             case 'del':
-              if (parts.length < 2) {
-                console.log('Usage: del <key>');
+              if (commandParts.length < 1) {
+                console.log('Usage: [<nodeId>] del <key>');
                 break;
               }
-              const delValue = await this.executeCommand({ type: 'DEL', key: parts[1] });
+              const delValue = await this.executeCommand({ type: 'DEL', key: commandParts[0] }, targetNodeId);
               console.log(`"${delValue}"`);
               break;
 
             case 'append':
-              if (parts.length < 3) {
-                console.log('Usage: append <key> <value>');
+              if (commandParts.length < 2) {
+                console.log('Usage: [<nodeId>] append <key> <value>');
                 break;
               }
-              const appendValue = parts.slice(2).join(' ');
-              await this.executeCommand({ type: 'APPEND', key: parts[1], value: appendValue });
+              const appendValue = commandParts.slice(1).join(' ');
+              await this.executeCommand({ type: 'APPEND', key: commandParts[0], value: appendValue }, targetNodeId);
               console.log('OK');
               break;
 
             case 'request_log':
-              const logs = await this.executeCommand({ type: 'REQUEST_LOG' });
+              const logs = await this.executeCommand({ type: 'REQUEST_LOG' }, targetNodeId);
               console.log('Logs from leader:');
               logs.forEach((log: LogEntry, index: number) => {
                 console.log(`[${index}] Term: ${log.term}, Command: ${JSON.stringify(log.command)}, Timestamp: ${new Date(log.timestamp).toISOString()}`);
