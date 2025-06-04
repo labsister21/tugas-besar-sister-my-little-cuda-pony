@@ -60,7 +60,7 @@ export class RaftClient {
         { command }
       );
 
-      if (response.status === 302) {
+      if (response.status === 302 || (response.status === 400 && response.data.leaderInfo)) {
         // redirect to leader
         if (response.data.leaderInfo) {
           this.currentLeader = response.data.leaderInfo;
@@ -75,7 +75,7 @@ export class RaftClient {
 
       return response.data.data;
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 302) {
+      if (axios.isAxiosError(error) && (error.response?.status === 302 || error.response?.status === 400)) {
         const leaderInfo = error.response.data.leaderInfo;
         if (leaderInfo) {
           this.currentLeader = leaderInfo;
