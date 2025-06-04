@@ -312,8 +312,6 @@ export class RaftNode extends EventEmitter {
       );
 
       if (this.state !== NodeState.LEADER) {
-        this.log(
-          `Not a leader anymore, ignoring response from ${node.id}`)
         return;
       }
 
@@ -515,7 +513,6 @@ export class RaftNode extends EventEmitter {
     if (!this.clusterNodes.find((node) => node.id === nodeInfo.id)) {
       this.clusterNodes.push(nodeInfo);
       if (this.state === NodeState.LEADER) {
-        this.log('Leader node')
         this.nextIndex.set(
           nodeInfo.id,
           this.logEntries.length > 0
