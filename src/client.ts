@@ -1,12 +1,14 @@
 import axios from "axios";
 import readline from "readline";
 import { NodeInfo, Command, ClientResponse, LogEntry } from "./types";
+import { DEFAULT_CLUSTER } from "./clusterConfig";
 
 export class RaftClient {
   private clusterNodes: NodeInfo[];
   private currentLeader: NodeInfo | null = null;
+  private connectedNode: NodeInfo | null = null;
 
-  constructor(clusterNodes: NodeInfo[]) {
+  constructor(clusterNodes: NodeInfo[] = []) {
     this.clusterNodes = clusterNodes;
   }
 
@@ -99,6 +101,32 @@ export class RaftClient {
     }
   }
 
+  private async connectToNode(nodeId: string): Promise<void> {
+    const node = DEFAULT_CLUSTER.find((n) => n.id === nodeId);
+    if (!node) {
+      throw new Error(`Node ${nodeId} not found in default cluster`);
+    }
+    if (!this.clusterNodes.some((n) => n.id === nodeId)) {
+      this.clusterNodes.push(node);
+      this.connectedNode = node;
+      console.log(`Connected to node ${nodeId}`);
+    } else {
+      console.log(`Already connected to node ${nodeId}`);
+    }
+  }
+
+  private async disconnectFromNode(nodeId: string): Promise<void> {
+    const nodeIndex = this.clusterNodes.findIndex((n) => n.id === nodeId);
+    if (nodeIndex === -1) {
+      throw new Error(`Not connected to node ${nodeId}`);
+    }
+    this.clusterNodes.splice(nodeIndex, 1);
+    if (this.connectedNode?.id === nodeId) {
+      this.connectedNode = null;
+    }
+    console.log(`Disconnected from node ${nodeId}`);
+  }
+
   public async startCLI(): Promise<void> {
     const rl = readline.createInterface({
       input: process.stdin,
@@ -107,7 +135,7 @@ export class RaftClient {
 
     console.log("Raft KV Store Client");
     console.log(
-      "Available commands: [<nodeId>] ping, [<nodeId>] get <key>, [<nodeId>] set <key> <value>, [<nodeId>] strln <key>, [<nodeId>] del <key>, [<nodeId>] append <key> <value>, request_log"
+      "Available commands: connect <nodeId>, disconnect <nodeId>, [<nodeId>] ping, [<nodeId>] get <key>, [<nodeId>] set <key> <value>, [<nodeId>] strln <key>, [<nodeId>] del <key>, [<nodeId>] append <key> <value>, request_log, add_node <nodeId>, remove_node <nodeId>"
     );
     console.log('Type "exit" to quit');
 
@@ -118,8 +146,8 @@ export class RaftClient {
         let commandType: string;
         let commandParts: string[];
 
-        // check if first argument is a nodeid
-        if (this.clusterNodes.some((node) => node.id === parts[0])) {
+        // Check if first argument is a nodeId
+        if (DEFAULT_CLUSTER.some((node) => node.id === parts[0])) {
           targetNodeId = parts[0];
           commandType = parts[1]?.toLowerCase() || "";
           commandParts = parts.slice(2);
@@ -134,7 +162,58 @@ export class RaftClient {
               rl.close();
               return;
 
+            case "connect":
+              if (commandParts.length < 1) {
+                console.log("Usage: connect <nodeId>");
+                break;
+              }
+              await this.connectToNode(commandParts[0]);
+              break;
+
+            case "disconnect":
+              if (commandParts.length < 1) {
+                console.log("Usage: disconnect <nodeId>");
+                break;
+              }
+              await this.disconnectFromNode(commandParts[0]);
+              break;
+
+            case "add_node":
+              if (commandParts.length < 1) {
+                console.log("Usage: add_node <nodeId>");
+                break;
+              }
+              const nodeToAdd = DEFAULT_CLUSTER.find(
+                (n) => n.id === commandParts[0]
+              );
+              if (!nodeToAdd) {
+                console.log(`Node ${commandParts[0]} not found in default cluster`);
+                break;
+              }
+              await this.executeCommand(
+                { type: "ADD_NODE", nodeInfo: nodeToAdd },
+                targetNodeId
+              );
+              console.log(`Node ${commandParts[0]} added to cluster`);
+              break;
+
+            case "remove_node":
+              if (commandParts.length < 1) {
+                console.log("Usage: remove_node <nodeId>");
+                break;
+              }
+              await this.executeCommand(
+                { type: "REMOVE_NODE", nodeId: commandParts[0] },
+                targetNodeId
+              );
+              console.log(`Node ${commandParts[0]} removed from cluster`);
+              break;
+
             case "ping":
+              if (this.clusterNodes.length === 0) {
+                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                break;
+              }
               const pongResult = await this.executeCommand(
                 { type: "PING" },
                 targetNodeId
@@ -143,6 +222,10 @@ export class RaftClient {
               break;
 
             case "get":
+              if (this.clusterNodes.length === 0) {
+                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                break;
+              }
               if (commandParts.length < 1) {
                 console.log("Usage: [<nodeId>] get <key>");
                 break;
@@ -155,6 +238,10 @@ export class RaftClient {
               break;
 
             case "set":
+              if (this.clusterNodes.length === 0) {
+                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                break;
+              }
               if (commandParts.length < 2) {
                 console.log("Usage: [<nodeId>] set <key> <value>");
                 break;
@@ -168,6 +255,10 @@ export class RaftClient {
               break;
 
             case "strln":
+              if (this.clusterNodes.length === 0) {
+                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                break;
+              }
               if (commandParts.length < 1) {
                 console.log("Usage: [<nodeId>] strln <key>");
                 break;
@@ -180,6 +271,10 @@ export class RaftClient {
               break;
 
             case "del":
+              if (this.clusterNodes.length === 0) {
+                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                break;
+              }
               if (commandParts.length < 1) {
                 console.log("Usage: [<nodeId>] del <key>");
                 break;
@@ -192,6 +287,10 @@ export class RaftClient {
               break;
 
             case "append":
+              if (this.clusterNodes.length === 0) {
+                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                break;
+              }
               if (commandParts.length < 2) {
                 console.log("Usage: [<nodeId>] append <key> <value>");
                 break;
@@ -205,6 +304,10 @@ export class RaftClient {
               break;
 
             case "request_log":
+              if (this.clusterNodes.length === 0) {
+                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                break;
+              }
               const logs = await this.executeCommand(
                 { type: "REQUEST_LOG" },
                 targetNodeId

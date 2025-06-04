@@ -56,15 +56,8 @@ for ((i=1; i<=jumlah_client; i++)); do
     stdin_open: true
     networks:
       - raft-network
-    command: npm run dev client
-    depends_on:
+    command: sleep infinity
 EOF
-    # Add dependencies for all server nodes
-    for ((j=1; j<=jumlah_server; j++)); do
-        cat << EOF >> docker-compose.yml
-      - raft-server-$j
-EOF
-    done
 done
 
 # Define the network
@@ -74,7 +67,7 @@ networks:
     driver: bridge
 EOF
 
-# Generate cluster configuration for index.ts
+# Generate cluster configuration for servers
 cluster_config="export const DEFAULT_CLUSTER = ["
 for ((i=1; i<=jumlah_server; i++)); do
     port=$((3000 + i))
@@ -85,19 +78,14 @@ for ((i=1; i<=jumlah_server; i++)); do
 done
 cluster_config+="];"
 
-# Write cluster configuration to a temporary file
+# Write cluster configuration to clusterConfig.ts
 echo $cluster_config > src/clusterConfig.ts
 
 # Start Docker Compose in detached mode
 echo "Starting $jumlah_server server(s) and $jumlah_client client(s)..."
 docker-compose up --build -d
 
-# If there are clients, attach to the first one for interactive use
-if [ "$jumlah_client" -gt 0 ]; then
-    echo "Attaching to raft-client-1 for interactive use..."
-    echo "To attach to other clients, use: docker exec -it raft-client-<number> bash"
-    docker exec -it raft-client-1 bash -c "npm run dev client"
-fi
-
-# Note: Containers will keep running in the background
+echo "All servers are running and connected to each other."
+echo "Clients are available but not connected. To connect a client, use:"
+echo "  docker exec -it raft-client-<number> npm run dev client"
 echo "To stop all containers, run: docker-compose down"

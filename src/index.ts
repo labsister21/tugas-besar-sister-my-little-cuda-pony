@@ -24,7 +24,7 @@ async function startServer(nodeId: string, port: number, host: string): Promise<
 }
 
 async function startClient(): Promise<void> {
-  const client = new RaftClient(DEFAULT_CLUSTER);
+  const client = new RaftClient();
   await client.startCLI();
 }
 
