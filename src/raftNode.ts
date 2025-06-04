@@ -1,6 +1,6 @@
-import { EventEmitter } from 'events';
-import axios from 'axios';
-import { v4 as uuidv4 } from 'uuid';
+import { EventEmitter } from "events";
+import axios from "axios";
+import { v4 as uuidv4 } from "uuid";
 import {
   NodeInfo,
   LogEntry,
@@ -10,9 +10,9 @@ import {
   AppendEntriesRequest,
   AppendEntriesResponse,
   NodeState,
-  Snapshot
-} from './types';
-import { PersistentStorage } from './persistentStorage';
+  Snapshot,
+} from "./types";
+import { PersistentStorage } from "./persistentStorage";
 
 export class RaftNode extends EventEmitter {
   private currentTerm: number = 0;
@@ -39,10 +39,7 @@ export class RaftNode extends EventEmitter {
   private static readonly VOTE_REQUEST_TIMEOUT = 100; // 100ms
   private static readonly SNAPSHOT_THRESHOLD = 100; // Compact logs after 100 entries
 
-  constructor(
-    private nodeInfo: NodeInfo,
-    private clusterNodes: NodeInfo[]
-  ) {
+  constructor(private nodeInfo: NodeInfo, private clusterNodes: NodeInfo[]) {
     super();
     this.persistentStorage = new PersistentStorage(nodeInfo.id);
     this.initialize().then(() => {
@@ -67,11 +64,17 @@ export class RaftNode extends EventEmitter {
     }
 
     this.logEntries = await this.persistentStorage.loadLog();
-    this.logEntries = this.logEntries.filter(entry => entry.index > this.lastSnapshotIndex);
+    this.logEntries = this.logEntries.filter(
+      (entry) => entry.index > this.lastSnapshotIndex
+    );
   }
 
   private log(message: string): void {
-    console.log(`[${new Date().toISOString()}] [${this.nodeInfo.id}] [${this.state}] ${message}`);
+    console.log(
+      `[${new Date().toISOString()}] [${this.nodeInfo.id}] [${
+        this.state
+      }] ${message}`
+    );
   }
 
   private resetElectionTimeout(): void {
@@ -79,8 +82,10 @@ export class RaftNode extends EventEmitter {
       clearTimeout(this.electionTimeout);
     }
 
-    const timeout = RaftNode.MIN_ELECTION_TIMEOUT +
-      Math.random() * (RaftNode.MAX_ELECTION_TIMEOUT - RaftNode.MIN_ELECTION_TIMEOUT);
+    const timeout =
+      RaftNode.MIN_ELECTION_TIMEOUT +
+      Math.random() *
+        (RaftNode.MAX_ELECTION_TIMEOUT - RaftNode.MIN_ELECTION_TIMEOUT);
 
     this.electionTimeout = setTimeout(() => {
       if (this.state !== NodeState.LEADER) {
@@ -105,35 +110,46 @@ export class RaftNode extends EventEmitter {
     this.log(`Starting election for term ${this.currentTerm}`);
     this.resetElectionTimeout();
 
-    const lastLogIndex = this.logEntries.length > 0 ? this.logEntries[this.logEntries.length - 1].index : this.lastSnapshotIndex;
-    const lastLogTerm = this.logEntries.length > 0 ? this.logEntries[this.logEntries.length - 1].term : this.lastSnapshotTerm;
+    const lastLogIndex =
+      this.logEntries.length > 0
+        ? this.logEntries[this.logEntries.length - 1].index
+        : this.lastSnapshotIndex;
+    const lastLogTerm =
+      this.logEntries.length > 0
+        ? this.logEntries[this.logEntries.length - 1].term
+        : this.lastSnapshotTerm;
 
     const voteRequest: VoteRequest = {
       term: this.currentTerm,
       candidateId: this.nodeInfo.id,
       lastLogIndex,
-      lastLogTerm
+      lastLogTerm,
     };
 
-    const activeNodes = new Set([this.nodeInfo.id]);
-    const newClusterNodes: NodeInfo[] = [this.nodeInfo];
-    for (const node of this.clusterNodes) {
-      if (node.id !== this.nodeInfo.id) {
+    const nodesToRequestVoteFrom: NodeInfo[] = [];
+    const healthCheckPromises = this.clusterNodes
+      .filter((node) => node.id !== this.nodeInfo.id)
+      .map(async (node) => {
         try {
-          await axios.get(`http://${node.host}:${node.port}/health`, { timeout: 100 });
-          activeNodes.add(node.id);
-          newClusterNodes.push(node);
+          // Perform a quick health check or assume reachable if not explicitly removing.
+          // For simplicity here, we'll try to request from all configured nodes.
+          // A more optimized approach might skip nodes known to be down for a long time,
+          // but the quorum MUST be based on this.clusterNodes.length.
+          nodesToRequestVoteFrom.push(node);
         } catch (error) {
-          this.log(`Node ${node.id} is down and will be removed from cluster`);
+          this.log(
+            `Node ${node.id} might be down, but will still be part of quorum calculation.`
+          );
         }
-      }
-    }
+      });
 
-    this.clusterNodes = newClusterNodes;
+    // For this fix, we will attempt to request votes from all other configured nodes.
+    // The original health check logic that modified this.clusterNodes is removed.
+    // await Promise.allSettled(healthCheckPromises); // This was part of the removed logic
 
-    const votePromises = this.clusterNodes
-      .filter(node => node.id !== this.nodeInfo.id)
-      .map(node => this.requestVote(node, voteRequest));
+    const votePromises = this.clusterNodes // Iterate over the definitive cluster list
+      .filter((node) => node.id !== this.nodeInfo.id)
+      .map((node) => this.requestVote(node, voteRequest));
 
     try {
       await Promise.allSettled(votePromises);
@@ -142,7 +158,8 @@ export class RaftNode extends EventEmitter {
         return;
       }
 
-      const majorityNeeded = Math.floor(activeNodes.size / 2) + 1;
+      // Majority is based on the total number of nodes in the configured cluster.
+      const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
       if (this.votes.size >= majorityNeeded) {
         this.becomeLeader();
       } else {
@@ -150,7 +167,9 @@ export class RaftNode extends EventEmitter {
         this.votedFor = null;
         await this.persistentStorage.saveState(this.currentTerm, this.votedFor);
         this.resetElectionTimeout();
-        this.log(`Election failed - only got ${this.votes.size} votes, needed ${majorityNeeded} from ${activeNodes.size} active nodes`);
+        this.log(
+          `Election failed - only got ${this.votes.size} votes, needed ${majorityNeeded} from ${this.clusterNodes.length} configured nodes`
+        );
       }
     } catch (error) {
       this.log(`Election error: ${error}`);
@@ -161,7 +180,10 @@ export class RaftNode extends EventEmitter {
     }
   }
 
-  private async requestVote(node: NodeInfo, request: VoteRequest): Promise<void> {
+  private async requestVote(
+    node: NodeInfo,
+    request: VoteRequest
+  ): Promise<void> {
     try {
       const response = await axios.post<VoteResponse>(
         `http://${node.host}:${node.port}/raft/vote`,
@@ -169,7 +191,10 @@ export class RaftNode extends EventEmitter {
         { timeout: RaftNode.VOTE_REQUEST_TIMEOUT }
       );
 
-      if (this.state !== NodeState.CANDIDATE || this.currentTerm !== request.term) {
+      if (
+        this.state !== NodeState.CANDIDATE ||
+        this.currentTerm !== request.term
+      ) {
         return;
       }
 
@@ -180,13 +205,24 @@ export class RaftNode extends EventEmitter {
         this.leaderId = null;
         await this.persistentStorage.saveState(this.currentTerm, this.votedFor);
         this.resetElectionTimeout();
-        this.log(`Stepping down due to higher term ${response.data.term} from ${node.id}`);
-      } else if (response.data.voteGranted && response.data.term === this.currentTerm) {
+        this.log(
+          `Stepping down due to higher term ${response.data.term} from ${node.id}`
+        );
+      } else if (
+        response.data.voteGranted &&
+        response.data.term === this.currentTerm
+      ) {
         this.votes.add(node.id);
-        this.log(`Received vote from ${node.id} (${this.votes.size}/${this.clusterNodes.length})`);
+        this.log(
+          `Received vote from ${node.id} (${this.votes.size}/${this.clusterNodes.length})`
+        );
       }
     } catch (error) {
-      this.log(`Failed to get vote from ${node.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.log(
+        `Failed to get vote from ${node.id}: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
@@ -210,7 +246,12 @@ export class RaftNode extends EventEmitter {
 
     for (const node of this.clusterNodes) {
       if (node.id !== this.nodeInfo.id) {
-        this.nextIndex.set(node.id, this.logEntries.length > 0 ? this.logEntries[this.logEntries.length - 1].index + 1 : this.lastSnapshotIndex + 1);
+        this.nextIndex.set(
+          node.id,
+          this.logEntries.length > 0
+            ? this.logEntries[this.logEntries.length - 1].index + 1
+            : this.lastSnapshotIndex + 1
+        );
         this.matchIndex.set(node.id, this.lastSnapshotIndex);
       }
     }
@@ -237,8 +278,8 @@ export class RaftNode extends EventEmitter {
 
   private async sendHeartbeats(): Promise<void> {
     const promises = this.clusterNodes
-      .filter(node => node.id !== this.nodeInfo.id)
-      .map(node => this.sendAppendEntries(node));
+      .filter((node) => node.id !== this.nodeInfo.id)
+      .map((node) => this.sendAppendEntries(node));
 
     await Promise.allSettled(promises);
   }
@@ -251,10 +292,16 @@ export class RaftNode extends EventEmitter {
     }
 
     const prevLogIndex = nextIndex - 1;
-    const prevLogTerm = prevLogIndex >= 0 ? 
-      (prevLogIndex <= this.lastSnapshotIndex ? this.lastSnapshotTerm : this.logEntries[prevLogIndex - this.lastSnapshotIndex - 1].term) : 
-      0;
-    const entries = nextIndex <= this.lastSnapshotIndex ? [] : this.logEntries.slice(nextIndex - this.lastSnapshotIndex - 1);
+    const prevLogTerm =
+      prevLogIndex >= 0
+        ? prevLogIndex <= this.lastSnapshotIndex
+          ? this.lastSnapshotTerm
+          : this.logEntries[prevLogIndex - this.lastSnapshotIndex - 1].term
+        : 0;
+    const entries =
+      nextIndex <= this.lastSnapshotIndex
+        ? []
+        : this.logEntries.slice(nextIndex - this.lastSnapshotIndex - 1);
 
     const request: AppendEntriesRequest = {
       term: this.currentTerm,
@@ -262,7 +309,7 @@ export class RaftNode extends EventEmitter {
       prevLogIndex,
       prevLogTerm,
       entries,
-      leaderCommit: this.commitIndex
+      leaderCommit: this.commitIndex,
     };
 
     try {
@@ -289,13 +336,18 @@ export class RaftNode extends EventEmitter {
           this.heartbeatInterval = null;
         }
 
-        this.log(`Stepping down as leader due to higher term ${response.data.term} from ${node.id}`);
+        this.log(
+          `Stepping down as leader due to higher term ${response.data.term} from ${node.id}`
+        );
       } else if (response.data.success) {
         this.nextIndex.set(node.id, nextIndex + entries.length);
         this.matchIndex.set(node.id, nextIndex + entries.length - 1);
         this.updateCommitIndex();
       } else {
-        this.nextIndex.set(node.id, Math.max(this.lastSnapshotIndex + 1, nextIndex - 1));
+        this.nextIndex.set(
+          node.id,
+          Math.max(this.lastSnapshotIndex + 1, nextIndex - 1)
+        );
       }
     } catch (error) {
       // Node is unreachable
@@ -313,7 +365,7 @@ export class RaftNode extends EventEmitter {
       prevLogTerm: this.lastSnapshotTerm,
       entries: [],
       leaderCommit: this.commitIndex,
-      snapshot
+      snapshot,
     };
 
     try {
@@ -328,7 +380,11 @@ export class RaftNode extends EventEmitter {
         this.matchIndex.set(node.id, this.lastSnapshotIndex);
       }
     } catch (error) {
-      this.log(`Failed to send snapshot to ${node.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.log(
+        `Failed to send snapshot to ${node.id}: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
@@ -341,12 +397,14 @@ export class RaftNode extends EventEmitter {
     const snapshot: Snapshot = {
       lastIncludedIndex: lastIndex,
       lastIncludedTerm: lastTerm,
-      data: Object.fromEntries(this.keyValueStore)
+      data: Object.fromEntries(this.keyValueStore),
     };
 
     await this.persistentStorage.saveSnapshot(snapshot);
     // Trim logs up to lastIndex
-    this.logEntries = this.logEntries.filter(entry => entry.index > lastIndex);
+    this.logEntries = this.logEntries.filter(
+      (entry) => entry.index > lastIndex
+    );
     await this.persistentStorage.saveLog(this.logEntries);
 
     this.lastSnapshotIndex = lastIndex;
@@ -357,30 +415,38 @@ export class RaftNode extends EventEmitter {
   private updateCommitIndex(): void {
     if (this.state !== NodeState.LEADER) return;
 
-    const activeNodes = new Set([this.nodeInfo.id]);
-    for (const node of this.clusterNodes) {
-      try {
-        axios.get(`http://${node.host}:${node.port}/health`, { timeout: 100 });
-        activeNodes.add(node.id);
-      } catch (error) {
-        // Node is considered down
-      }
-    }
+    const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
 
-    for (let n = this.commitIndex + 1; n <= this.lastSnapshotIndex + this.logEntries.length; n++) {
+    for (
+      let n = this.commitIndex + 1;
+      n <= this.lastSnapshotIndex + this.logEntries.length;
+      n++
+    ) {
       if (n <= this.lastSnapshotIndex) continue;
-      if (this.logEntries[n - this.lastSnapshotIndex - 1].term === this.currentTerm) {
+      if (
+        this.logEntries[n - this.lastSnapshotIndex - 1].term ===
+        this.currentTerm
+      ) {
         let count = 1; // Count self
 
-        for (const [nodeId, matchIndex] of this.matchIndex) {
-          if (matchIndex >= n && activeNodes.has(nodeId)) count++;
+        for (const node of this.clusterNodes) {
+          if (node.id !== this.nodeInfo.id) {
+            const matchedIndexForNode = this.matchIndex.get(node.id);
+            if (matchedIndexForNode !== undefined && matchedIndexForNode >= n) {
+              count++;
+            }
+          }
         }
 
-        const majorityNeeded = Math.floor(activeNodes.size / 2) + 1;
         if (count >= majorityNeeded) {
           this.commitIndex = n;
+          this.log(
+            `Commit index updated to ${this.commitIndex}. Replicated on ${count}/${this.clusterNodes.length} nodes.`
+          );
           this.applyCommittedEntries();
-          this.createSnapshot().catch(error => this.log(`Snapshot creation failed: ${error}`));
+          this.createSnapshot().catch((error) =>
+            this.log(`Snapshot creation failed: ${error}`)
+          );
         }
       }
     }
@@ -390,7 +456,8 @@ export class RaftNode extends EventEmitter {
     while (this.lastApplied < this.commitIndex) {
       this.lastApplied++;
       if (this.lastApplied <= this.lastSnapshotIndex) continue;
-      const entry = this.logEntries[this.lastApplied - this.lastSnapshotIndex - 1];
+      const entry =
+        this.logEntries[this.lastApplied - this.lastSnapshotIndex - 1];
       const result = this.applyCommand(entry.command);
       this.commandResults.set(entry.index, result);
     }
@@ -398,52 +465,52 @@ export class RaftNode extends EventEmitter {
 
   private applyCommand(command: Command): any {
     switch (command.type) {
-      case 'SET':
+      case "SET":
         this.keyValueStore.set(command.key!, command.value!);
         this.log(`Applied SET ${command.key} = ${command.value}`);
-        return 'OK';
+        return "OK";
 
-      case 'GET':
-        const getValue = this.keyValueStore.get(command.key!) || '';
+      case "GET":
+        const getValue = this.keyValueStore.get(command.key!) || "";
         return getValue;
 
-      case 'DEL':
-        const deletedValue = this.keyValueStore.get(command.key!) || '';
+      case "DEL":
+        const deletedValue = this.keyValueStore.get(command.key!) || "";
         this.keyValueStore.delete(command.key!);
         this.log(`Applied DEL ${command.key}`);
         return deletedValue;
 
-      case 'APPEND':
-        const currentValue = this.keyValueStore.get(command.key!) || '';
+      case "APPEND":
+        const currentValue = this.keyValueStore.get(command.key!) || "";
         const newValue = currentValue + command.value!;
         this.keyValueStore.set(command.key!, newValue);
         this.log(`Applied APPEND ${command.key} += ${command.value}`);
-        return 'OK';
+        return "OK";
 
-      case 'STRLN':
-        const strValue = this.keyValueStore.get(command.key!) || '';
+      case "STRLN":
+        const strValue = this.keyValueStore.get(command.key!) || "";
         return strValue.length;
 
-      case 'PING':
-        return 'PONG';
+      case "PING":
+        return "PONG";
 
-      case 'ADD_NODE':
+      case "ADD_NODE":
         if (command.nodeInfo) {
           this.applyAddNode(command.nodeInfo);
           this.log(`Applied ADD_NODE ${command.nodeInfo.id}`);
-          return 'OK';
+          return "OK";
         }
-        throw new Error('Invalid ADD_NODE command');
+        throw new Error("Invalid ADD_NODE command");
 
-      case 'REMOVE_NODE':
+      case "REMOVE_NODE":
         if (command.nodeId) {
           this.applyRemoveNode(command.nodeId);
           this.log(`Applied REMOVE_NODE ${command.nodeId}`);
-          return 'OK';
+          return "OK";
         }
-        throw new Error('Invalid REMOVE_NODE command');
+        throw new Error("Invalid REMOVE_NODE command");
 
-      case 'REQUEST_LOG':
+      case "REQUEST_LOG":
         return this.getLog();
 
       default:
@@ -452,33 +519,38 @@ export class RaftNode extends EventEmitter {
   }
 
   private applyAddNode(nodeInfo: NodeInfo): void {
-    if (!this.clusterNodes.find(node => node.id === nodeInfo.id)) {
+    if (!this.clusterNodes.find((node) => node.id === nodeInfo.id)) {
       this.clusterNodes.push(nodeInfo);
       if (this.state === NodeState.LEADER) {
-        this.nextIndex.set(nodeInfo.id, this.logEntries.length > 0 ? this.logEntries[this.logEntries.length - 1].index + 1 : this.lastSnapshotIndex + 1);
+        this.nextIndex.set(
+          nodeInfo.id,
+          this.logEntries.length > 0
+            ? this.logEntries[this.logEntries.length - 1].index + 1
+            : this.lastSnapshotIndex + 1
+        );
         this.matchIndex.set(nodeInfo.id, this.lastSnapshotIndex);
       }
     }
   }
 
   private applyRemoveNode(nodeId: string): void {
-    this.clusterNodes = this.clusterNodes.filter(node => node.id !== nodeId);
+    this.clusterNodes = this.clusterNodes.filter((node) => node.id !== nodeId);
     this.nextIndex.delete(nodeId);
     this.matchIndex.delete(nodeId);
   }
 
   public async addNodeConsensus(nodeInfo: NodeInfo): Promise<any> {
     const command: Command = {
-      type: 'ADD_NODE',
-      nodeInfo
+      type: "ADD_NODE",
+      nodeInfo,
     };
     return this.executeCommand(command);
   }
 
   public async removeNodeConsensus(nodeId: string): Promise<any> {
     const command: Command = {
-      type: 'REMOVE_NODE',
-      nodeId
+      type: "REMOVE_NODE",
+      nodeId,
     };
     return this.executeCommand(command);
   }
@@ -495,41 +567,58 @@ export class RaftNode extends EventEmitter {
         this.heartbeatInterval = null;
       }
 
-      this.persistentStorage.saveState(this.currentTerm, this.votedFor).catch(error => 
-        this.log(`Failed to save state: ${error}`)
-      );
+      this.persistentStorage
+        .saveState(this.currentTerm, this.votedFor)
+        .catch((error) => this.log(`Failed to save state: ${error}`));
       this.resetElectionTimeout();
-      this.log(`Updated term to ${this.currentTerm} due to vote request from ${request.candidateId}`);
+      this.log(
+        `Updated term to ${this.currentTerm} due to vote request from ${request.candidateId}`
+      );
     }
 
-    const lastLogIndex = this.logEntries.length > 0 ? this.logEntries[this.logEntries.length - 1].index : this.lastSnapshotIndex;
-    const lastLogTerm = this.logEntries.length > 0 ? this.logEntries[this.logEntries.length - 1].term : this.lastSnapshotTerm;
+    const lastLogIndex =
+      this.logEntries.length > 0
+        ? this.logEntries[this.logEntries.length - 1].index
+        : this.lastSnapshotIndex;
+    const lastLogTerm =
+      this.logEntries.length > 0
+        ? this.logEntries[this.logEntries.length - 1].term
+        : this.lastSnapshotTerm;
 
-    const logUpToDate = request.lastLogTerm > lastLogTerm ||
-      (request.lastLogTerm === lastLogTerm && request.lastLogIndex >= lastLogIndex);
+    const logUpToDate =
+      request.lastLogTerm > lastLogTerm ||
+      (request.lastLogTerm === lastLogTerm &&
+        request.lastLogIndex >= lastLogIndex);
 
-    const voteGranted = request.term === this.currentTerm &&
+    const voteGranted =
+      request.term === this.currentTerm &&
       (this.votedFor === null || this.votedFor === request.candidateId) &&
       logUpToDate;
 
     if (voteGranted) {
       this.votedFor = request.candidateId;
-      this.persistentStorage.saveState(this.currentTerm, this.votedFor).catch(error => 
-        this.log(`Failed to save state: ${error}`)
-      );
+      this.persistentStorage
+        .saveState(this.currentTerm, this.votedFor)
+        .catch((error) => this.log(`Failed to save state: ${error}`));
       this.resetElectionTimeout();
-      this.log(`Granted vote to ${request.candidateId} for term ${request.term}`);
+      this.log(
+        `Granted vote to ${request.candidateId} for term ${request.term}`
+      );
     } else {
-      this.log(`Denied vote to ${request.candidateId} for term ${request.term} (already voted for: ${this.votedFor}, log up-to-date: ${logUpToDate})`);
+      this.log(
+        `Denied vote to ${request.candidateId} for term ${request.term} (already voted for: ${this.votedFor}, log up-to-date: ${logUpToDate})`
+      );
     }
 
     return {
       term: this.currentTerm,
-      voteGranted
+      voteGranted,
     };
   }
 
-  public handleAppendEntries(request: AppendEntriesRequest): AppendEntriesResponse {
+  public handleAppendEntries(
+    request: AppendEntriesRequest
+  ): AppendEntriesResponse {
     if (request.term > this.currentTerm) {
       this.currentTerm = request.term;
       this.votedFor = null;
@@ -541,9 +630,9 @@ export class RaftNode extends EventEmitter {
         this.heartbeatInterval = null;
       }
 
-      this.persistentStorage.saveState(this.currentTerm, this.votedFor).catch(error => 
-        this.log(`Failed to save state: ${error}`)
-      );
+      this.persistentStorage
+        .saveState(this.currentTerm, this.votedFor)
+        .catch((error) => this.log(`Failed to save state: ${error}`));
     }
 
     if (request.term === this.currentTerm) {
@@ -572,14 +661,16 @@ export class RaftNode extends EventEmitter {
       this.lastSnapshotTerm = request.snapshot.lastIncludedTerm;
       this.commitIndex = request.snapshot.lastIncludedIndex;
       this.lastApplied = request.snapshot.lastIncludedIndex;
-      this.logEntries = this.logEntries.filter(entry => entry.index > this.lastSnapshotIndex);
+      this.logEntries = this.logEntries.filter(
+        (entry) => entry.index > this.lastSnapshotIndex
+      );
 
-      this.persistentStorage.saveSnapshot(request.snapshot).catch(error => 
-        this.log(`Failed to save snapshot: ${error}`)
-      );
-      this.persistentStorage.saveLog(this.logEntries).catch(error => 
-        this.log(`Failed to save log: ${error}`)
-      );
+      this.persistentStorage
+        .saveSnapshot(request.snapshot)
+        .catch((error) => this.log(`Failed to save snapshot: ${error}`));
+      this.persistentStorage
+        .saveLog(this.logEntries)
+        .catch((error) => this.log(`Failed to save log: ${error}`));
 
       return { term: this.currentTerm, success: true };
     }
@@ -591,8 +682,10 @@ export class RaftNode extends EventEmitter {
           return { term: this.currentTerm, success: false };
         }
       } else if (
-        this.logEntries.length + this.lastSnapshotIndex < request.prevLogIndex ||
-        (this.logEntries[request.prevLogIndex - this.lastSnapshotIndex - 1]?.term !== request.prevLogTerm)
+        this.logEntries.length + this.lastSnapshotIndex <
+          request.prevLogIndex ||
+        this.logEntries[request.prevLogIndex - this.lastSnapshotIndex - 1]
+          ?.term !== request.prevLogTerm
       ) {
         return { term: this.currentTerm, success: false };
       }
@@ -606,7 +699,10 @@ export class RaftNode extends EventEmitter {
         continue;
       }
       const logIndex = index - this.lastSnapshotIndex - 1;
-      if (logIndex < this.logEntries.length && this.logEntries[logIndex].term !== entry.term) {
+      if (
+        logIndex < this.logEntries.length &&
+        this.logEntries[logIndex].term !== entry.term
+      ) {
         this.logEntries = this.logEntries.slice(0, logIndex);
       }
       if (logIndex >= this.logEntries.length) {
@@ -616,13 +712,16 @@ export class RaftNode extends EventEmitter {
     }
 
     // Persist logs
-    this.persistentStorage.saveLog(this.logEntries).catch(error => 
-      this.log(`Failed to save log: ${error}`)
-    );
+    this.persistentStorage
+      .saveLog(this.logEntries)
+      .catch((error) => this.log(`Failed to save log: ${error}`));
 
     // Update commit index
     if (request.leaderCommit > this.commitIndex) {
-      this.commitIndex = Math.min(request.leaderCommit, this.lastSnapshotIndex + this.logEntries.length);
+      this.commitIndex = Math.min(
+        request.leaderCommit,
+        this.lastSnapshotIndex + this.logEntries.length
+      );
       this.applyCommittedEntries();
     }
 
@@ -631,14 +730,18 @@ export class RaftNode extends EventEmitter {
 
   public async executeCommand(command: Command): Promise<any> {
     if (this.state !== NodeState.LEADER) {
-      throw new Error('Not a leader');
+      throw new Error("Not a leader");
     }
 
-    if (command.type === 'GET' || command.type === 'STRLN' || command.type === 'REQUEST_LOG') {
+    if (
+      command.type === "GET" ||
+      command.type === "STRLN" ||
+      command.type === "REQUEST_LOG"
+    ) {
       return this.executeReadCommand(command);
     }
 
-    if (command.type === 'PING') {
+    if (command.type === "PING") {
       return this.applyCommand(command);
     }
 
@@ -646,13 +749,13 @@ export class RaftNode extends EventEmitter {
       term: this.currentTerm,
       index: this.lastSnapshotIndex + this.logEntries.length + 1,
       command,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
     this.logEntries.push(entry);
-    this.persistentStorage.saveLog(this.logEntries).catch(error => 
-      this.log(`Failed to save log: ${error}`)
-    );
+    this.persistentStorage
+      .saveLog(this.logEntries)
+      .catch((error) => this.log(`Failed to save log: ${error}`));
     this.log(`Added log entry: ${JSON.stringify(command)}`);
 
     return this.waitForCommitment(entry);
@@ -670,24 +773,28 @@ export class RaftNode extends EventEmitter {
     }
 
     const promises = this.clusterNodes
-      .filter(node => node.id !== this.nodeInfo.id)
-      .map(node => this.sendHeartbeatToNode(node));
+      .filter((node) => node.id !== this.nodeInfo.id)
+      .map((node) => this.sendHeartbeatToNode(node));
 
     const results = await Promise.allSettled(promises);
-    const successCount = results.filter(result => result.status === 'fulfilled').length + 1;
+    const successCount =
+      results.filter((result) => result.status === "fulfilled").length + 1;
 
     const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
     if (successCount < majorityNeeded) {
-      throw new Error('Lost leadership - cannot confirm majority');
+      throw new Error("Lost leadership - cannot confirm majority");
     }
   }
 
   private async sendHeartbeatToNode(node: NodeInfo): Promise<void> {
     const nextIndex = this.nextIndex.get(node.id) || 0;
     const prevLogIndex = nextIndex - 1;
-    const prevLogTerm = prevLogIndex >= 0 ? 
-      (prevLogIndex <= this.lastSnapshotIndex ? this.lastSnapshotTerm : this.logEntries[prevLogIndex - this.lastSnapshotIndex - 1].term) : 
-      0;
+    const prevLogTerm =
+      prevLogIndex >= 0
+        ? prevLogIndex <= this.lastSnapshotIndex
+          ? this.lastSnapshotTerm
+          : this.logEntries[prevLogIndex - this.lastSnapshotIndex - 1].term
+        : 0;
 
     const request: AppendEntriesRequest = {
       term: this.currentTerm,
@@ -695,7 +802,7 @@ export class RaftNode extends EventEmitter {
       prevLogIndex,
       prevLogTerm,
       entries: [],
-      leaderCommit: this.commitIndex
+      leaderCommit: this.commitIndex,
     };
 
     const response = await axios.post<AppendEntriesResponse>(
@@ -705,7 +812,7 @@ export class RaftNode extends EventEmitter {
     );
 
     if (!response.data.success || response.data.term > this.currentTerm) {
-      throw new Error('Heartbeat failed');
+      throw new Error("Heartbeat failed");
     }
   }
 
@@ -741,7 +848,9 @@ export class RaftNode extends EventEmitter {
 
   public getLeaderInfo(): NodeInfo | null {
     if (this.leaderId) {
-      return this.clusterNodes.find(node => node.id === this.leaderId) || null;
+      return (
+        this.clusterNodes.find((node) => node.id === this.leaderId) || null
+      );
     }
     return null;
   }
@@ -751,12 +860,16 @@ export class RaftNode extends EventEmitter {
   }
 
   public addNode(nodeInfo: NodeInfo): void {
-    this.log('WARNING: Using deprecated addNode. Use addNodeConsensus for Raft compliance.');
+    this.log(
+      "WARNING: Using deprecated addNode. Use addNodeConsensus for Raft compliance."
+    );
     this.applyAddNode(nodeInfo);
   }
 
   public removeNode(nodeId: string): void {
-    this.log('WARNING: Using deprecated removeNode. Use removeNodeConsensus for Raft compliance.');
+    this.log(
+      "WARNING: Using deprecated removeNode. Use removeNodeConsensus for Raft compliance."
+    );
     this.applyRemoveNode(nodeId);
   }
 
@@ -769,6 +882,6 @@ export class RaftNode extends EventEmitter {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
-    this.log('Node shutdown');
+    this.log("Node shutdown");
   }
 }

@@ -149,3 +149,6 @@ temp/
 
 # Docker
 docker-compose.yml
+
+# Persistent Log
+raft-data/*.json
