@@ -23,13 +23,13 @@ export class RaftServer {
   }
 
   private setupRoutes(): void {
-    this.app.post('/raft/vote', asyncHandler(async (req: Request, res: Response) => { 
-      const response = await this.raftNode.handleVoteRequest(req.body); 
+    this.app.post('/raft/vote', asyncHandler(async (req: Request, res: Response) => {
+      const response = await this.raftNode.handleVoteRequest(req.body);
       res.json(response);
     }));
 
-    this.app.post('/raft/append', asyncHandler(async (req: Request, res: Response) => { 
-      const response = await this.raftNode.handleAppendEntries(req.body); 
+    this.app.post('/raft/append', asyncHandler(async (req: Request, res: Response) => {
+      const response = await this.raftNode.handleAppendEntries(req.body);
       res.json(response);
     }));
 
@@ -47,7 +47,7 @@ export class RaftServer {
 
       const { command } = req.body as ClientRequest;
       const result = await this.raftNode.executeCommand(command);
-      
+
       res.json({
         success: true,
         data: result
@@ -102,7 +102,7 @@ export class RaftServer {
 
       const { nodeInfo } = req.body as { nodeInfo: NodeInfo };
       await this.raftNode.addNodeConsensus(nodeInfo);
-      
+
       res.json({ success: true });
     }));
 
@@ -119,7 +119,7 @@ export class RaftServer {
 
       const { nodeId } = req.params;
       await this.raftNode.removeNodeConsensus(nodeId);
-      
+
       res.json({ success: true });
     }));
 
