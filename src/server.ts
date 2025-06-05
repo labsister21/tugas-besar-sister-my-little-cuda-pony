@@ -51,20 +51,22 @@ export class RaftServer {
             error: "Not a leader",
             leaderInfo,
             code: "NOT_LEADER",
-            retriable: true, // Indicates this error can be retried
+            retriable: true,
           } as ClientResponse);
           return;
         }
 
         try {
-          const { command } = req.body as ClientRequest;
-          const result = await this.raftNode.executeCommand(command);
+          // Extract requestId in addition to command
+          const { command, requestId } = req.body as ClientRequest;
+          const result = await this.raftNode.executeCommand(command, requestId);
 
           res.json({
             success: true,
             data: result,
           } as ClientResponse);
         } catch (error) {
+          // Error handling remains the same
           const errorMsg =
             error instanceof Error ? error.message : String(error);
 

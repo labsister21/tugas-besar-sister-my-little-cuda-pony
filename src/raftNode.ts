@@ -41,6 +41,10 @@ export class RaftNode extends EventEmitter {
   private static readonly APPEND_ENTRIES_TIMEOUT = 1000;
   private static readonly COMMAND_COMMIT_TIMEOUT = 10000;
 
+  private processedRequests: Map<string, any> = new Map();
+  private static readonly MAX_REQUEST_HISTORY = 1000;
+  private static readonly REQUEST_EXPIRY_TIME = 60000;
+
   constructor(private nodeInfo: NodeInfo, private clusterNodes: NodeInfo[]) {
     super();
     this.persistentStorage = new PersistentStorage(nodeInfo.id);
@@ -176,7 +180,7 @@ export class RaftNode extends EventEmitter {
         }
       });
 
-    const votePromises = this.clusterNodes // Iterate over the definitive cluster list
+    const votePromises = this.clusterNodes 
       .filter((node) => node.id !== this.nodeInfo.id)
       .map((node) => this.requestVote(node, voteRequest));
 
@@ -187,7 +191,6 @@ export class RaftNode extends EventEmitter {
         return;
       }
 
-      // Majority is based on the total number of nodes in the configured cluster.
       const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
       if (this.votes.size >= majorityNeeded) {
         this.becomeLeader();
@@ -382,7 +385,6 @@ export class RaftNode extends EventEmitter {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.log(`Failed to send AppendEntries to ${node.id}: ${errorMsg}`);
 
-      // Only decrease nextIndex for log inconsistency, not for network errors
       if (!errorMsg.includes("timeout") && !errorMsg.includes("ECONNREFUSED")) {
         this.nextIndex.set(
           node.id,
@@ -852,9 +854,17 @@ export class RaftNode extends EventEmitter {
     return { term: this.currentTerm, success: true };
   }
 
-  public async executeCommand(command: Command): Promise<any> {
+  public async executeCommand(
+    command: Command,
+    requestId?: string
+  ): Promise<any> {
     if (this.state !== NodeState.LEADER) {
       throw new Error("Not a leader");
+    }
+
+    if (requestId && this.processedRequests.has(requestId)) {
+      this.log(`Request ${requestId} is a duplicate, returning cached result`);
+      return this.processedRequests.get(requestId);
     }
 
     if (
@@ -862,11 +872,19 @@ export class RaftNode extends EventEmitter {
       command.type === "STRLN" ||
       command.type === "REQUEST_LOG"
     ) {
-      return this.executeReadCommand(command);
+      const result = await this.executeReadCommand(command);
+      if (requestId) {
+        this.trackProcessedRequest(requestId, result);
+      }
+      return result;
     }
 
     if (command.type === "PING") {
-      return this.applyCommand(command);
+      const result = this.applyCommand(command);
+      if (requestId) {
+        this.trackProcessedRequest(requestId, result);
+      }
+      return result;
     }
 
     const entry: LogEntry = {
@@ -890,7 +908,31 @@ export class RaftNode extends EventEmitter {
       );
     }
 
-    return this.waitForCommitment(entry);
+    const result = await this.waitForCommitment(entry);
+
+    if (requestId) {
+      this.trackProcessedRequest(requestId, result);
+    }
+
+    return result;
+  }
+
+  private trackProcessedRequest(requestId: string, result: any): void {
+    this.processedRequests.set(requestId, result);
+
+    if (this.processedRequests.size > RaftNode.MAX_REQUEST_HISTORY) {
+      const entries = Array.from(this.processedRequests.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .slice(0, 100);
+
+      for (const [key] of entries) {
+        this.processedRequests.delete(key);
+      }
+    }
+
+    setTimeout(() => {
+      this.processedRequests.delete(requestId);
+    }, RaftNode.REQUEST_EXPIRY_TIME);
   }
 
   private async executeReadCommand(command: Command): Promise<any> {
@@ -907,14 +949,13 @@ export class RaftNode extends EventEmitter {
     // Track when we started the confirmation
     const startTime = Date.now();
 
-    // Track which nodes have responded successfully
+    
     const successfulNodes = new Set<string>();
-    successfulNodes.add(this.nodeInfo.id); // Leader counts itself
+    successfulNodes.add(this.nodeInfo.id);
 
     const majorityNeeded = Math.floor(this.clusterNodes.length / 2) + 1;
-    const maxWaitTime = 2000; // Maximum time to wait for responses
+    const maxWaitTime = 2000; 
 
-    // Try to get responses from followers
     const heartbeatPromises = this.clusterNodes
       .filter((node) => node.id !== this.nodeInfo.id)
       .map(async (node) => {
@@ -922,7 +963,6 @@ export class RaftNode extends EventEmitter {
           await this.sendHeartbeatToNode(node);
           successfulNodes.add(node.id);
         } catch (error) {
-          // Log but don't fail immediately
           this.log(
             `Failed to confirm leadership with ${node.id}: ${
               error instanceof Error ? error.message : String(error)
@@ -931,10 +971,8 @@ export class RaftNode extends EventEmitter {
         }
       });
 
-    // Start all heartbeats in parallel
     await Promise.allSettled(heartbeatPromises);
 
-    // Check if we have majority
     if (successfulNodes.size < majorityNeeded) {
       throw new Error(
         `Cannot confirm leadership - only reached ${successfulNodes.size}/${this.clusterNodes.length} nodes, need ${majorityNeeded}`
@@ -946,9 +984,7 @@ export class RaftNode extends EventEmitter {
     }
   }
 
-  // Replace your sendHeartbeatToNode method
   private async sendHeartbeatToNode(node: NodeInfo): Promise<void> {
-    // Prepare the request as before
     const nextIndex = this.nextIndex.get(node.id) || 0;
     const prevLogIndex = nextIndex - 1;
     const prevLogTerm =
@@ -967,7 +1003,6 @@ export class RaftNode extends EventEmitter {
       leaderCommit: this.commitIndex,
     };
 
-    // Use retry logic
     try {
       await this.retryRpc(
         async () => {
@@ -977,7 +1012,6 @@ export class RaftNode extends EventEmitter {
             { timeout: RaftNode.APPEND_ENTRIES_TIMEOUT }
           );
 
-          // Check for term and success
           if (response.data.term > this.currentTerm) {
             this.currentTerm = response.data.term;
             this.state = NodeState.FOLLOWER;
@@ -1003,12 +1037,11 @@ export class RaftNode extends EventEmitter {
             throw new Error("Heartbeat not successful");
           }
 
-          // Must return void
           return;
         },
         `Heartbeat to ${node.id}`,
-        1, // Only retry once for heartbeats
-        100 // Shorter delay for heartbeats
+        1,
+        100 
       );
     } catch (error) {
       throw error;
@@ -1043,7 +1076,7 @@ export class RaftNode extends EventEmitter {
             )
           );
         } else if (checkAttempts >= maxCheckAttempts) {
-          // If checked too many times, log progress but continue waiting for timeout
+          
           this.log(
             `Command still pending: index=${entry.index}, lastApplied=${
               this.lastApplied
@@ -1064,7 +1097,7 @@ export class RaftNode extends EventEmitter {
   }
 
   private getReplicationStatus(entryIndex: number): string {
-    const replicationCounts = { total: this.clusterNodes.length, success: 1 }; // 1 for self
+    const replicationCounts = { total: this.clusterNodes.length, success: 1 }; 
 
     for (const node of this.clusterNodes) {
       if (node.id !== this.nodeInfo.id) {

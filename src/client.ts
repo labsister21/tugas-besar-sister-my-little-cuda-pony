@@ -2,6 +2,7 @@ import axios from "axios";
 import readline from "readline";
 import { NodeInfo, Command, ClientResponse, LogEntry } from "./types";
 import { DEFAULT_CLUSTER } from "./clusterConfig";
+import { v4 as uuidv4 } from "uuid";
 
 export class RaftClient {
   private clusterNodes: NodeInfo[];
@@ -53,7 +54,6 @@ export class RaftClient {
       }
     }
 
-    // If we didn't find a leader but have more retries, try again
     const maxRetries = 2;
     if (attempt < maxRetries) {
       console.log(
@@ -72,7 +72,8 @@ export class RaftClient {
   private async executeCommand(
     command: Command,
     targetNodeId?: string,
-    attempt: number = 0
+    attempt: number = 0,
+    requestId: string = uuidv4() 
   ): Promise<any> {
     try {
       let targetNode: NodeInfo;
@@ -92,7 +93,11 @@ export class RaftClient {
 
       const response = await axios.post<ClientResponse>(
         `http://${targetNode.host}:${targetNode.port}/execute`,
-        { command },
+        {
+          command,
+          clientId: "client1", 
+          requestId, 
+        },
         { timeout }
       );
 
@@ -103,7 +108,7 @@ export class RaftClient {
         // redirect to leader
         if (response.data.leaderInfo) {
           this.currentLeader = response.data.leaderInfo;
-          return this.executeCommand(command, undefined, attempt);
+          return this.executeCommand(command, undefined, attempt, requestId);
         }
         throw new Error("No leader available");
       }
@@ -121,17 +126,15 @@ export class RaftClient {
         const leaderInfo = error.response.data.leaderInfo;
         if (leaderInfo) {
           this.currentLeader = leaderInfo;
-          return this.executeCommand(command, undefined, attempt);
+          return this.executeCommand(command, undefined, attempt, requestId);
         }
       }
 
-      // If we're on the last retry, or this isn't a retry-able error, throw
       const maxRetries = 3;
       if (attempt >= maxRetries) {
         throw error;
       }
 
-      // For network errors or 500s, retry with backoff
       if (
         axios.isAxiosError(error) &&
         (!error.response || error.response.status >= 500)
@@ -143,7 +146,12 @@ export class RaftClient {
         );
         const backoffMs = Math.min(100 * Math.pow(2, attempt), 2000);
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
-        return this.executeCommand(command, targetNodeId, attempt + 1);
+        return this.executeCommand(
+          command,
+          targetNodeId,
+          attempt + 1,
+          requestId
+        );
       }
 
       throw error;
