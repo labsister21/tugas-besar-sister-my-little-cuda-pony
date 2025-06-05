@@ -34,6 +34,8 @@ for ((i=1; i<=jumlah_server; i++)); do
   raft-server-$i:
     build: .
     container_name: raft-server-$i
+    cap_add:
+      - NET_ADMIN
     environment:
       - NODE_ID=$node_id
       - NODE_PORT=$port
