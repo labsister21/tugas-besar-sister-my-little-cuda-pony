@@ -18,15 +18,18 @@ export interface Snapshot {
 }
 
 export interface Command {
-  type: 'SET' | 'DEL' | 'APPEND' | 'PING' | 'GET' | 'STRLN' | 'ADD_NODE' | 'REMOVE_NODE' | 'REQUEST_LOG';
+  type:
+    | "SET"
+    | "DEL"
+    | "APPEND"
+    | "PING"
+    | "GET"
+    | "STRLN"
+    | "ADD_NODE"
+    | "REMOVE_NODE"
+    | "REQUEST_LOG";
   key?: string;
   value?: string;
-  nodeInfo?: NodeInfo;
-  nodeId?: string;
-}
-
-export interface MembershipChangeCommand {
-  type: 'ADD_NODE' | 'REMOVE_NODE';
   nodeInfo?: NodeInfo;
   nodeId?: string;
 }
@@ -59,9 +62,9 @@ export interface AppendEntriesResponse {
 }
 
 export enum NodeState {
-  FOLLOWER = 'FOLLOWER',
-  CANDIDATE = 'CANDIDATE',
-  LEADER = 'LEADER'
+  FOLLOWER = "FOLLOWER",
+  CANDIDATE = "CANDIDATE",
+  LEADER = "LEADER",
 }
 
 export interface ClientRequest {

@@ -1,5 +1,5 @@
-import * as fs from 'fs/promises';
-import { LogEntry, NodeInfo, Snapshot } from './types';
+import * as fs from "fs/promises";
+import { LogEntry, NodeInfo, Snapshot } from "./types";
 
 export class PersistentStorage {
   private stateFile: string;
@@ -13,7 +13,7 @@ export class PersistentStorage {
   }
 
   async init(): Promise<void> {
-    await fs.mkdir('./raft-data', { recursive: true });
+    await fs.mkdir("./raft-data", { recursive: true });
   }
 
   async saveState(currentTerm: number, votedFor: string | null): Promise<void> {
@@ -23,7 +23,7 @@ export class PersistentStorage {
 
   async loadState(): Promise<{ currentTerm: number; votedFor: string | null }> {
     try {
-      const data = await fs.readFile(this.stateFile, 'utf-8');
+      const data = await fs.readFile(this.stateFile, "utf-8");
       return JSON.parse(data);
     } catch (error) {
       return { currentTerm: 0, votedFor: null };
@@ -36,7 +36,7 @@ export class PersistentStorage {
 
   async loadLog(): Promise<LogEntry[]> {
     try {
-      const data = await fs.readFile(this.logFile, 'utf-8');
+      const data = await fs.readFile(this.logFile, "utf-8");
       return JSON.parse(data);
     } catch (error) {
       return [];
@@ -49,7 +49,7 @@ export class PersistentStorage {
 
   async loadSnapshot(): Promise<Snapshot | null> {
     try {
-      const data = await fs.readFile(this.snapshotFile, 'utf-8');
+      const data = await fs.readFile(this.snapshotFile, "utf-8");
       return JSON.parse(data);
     } catch (error) {
       return null;
@@ -60,7 +60,7 @@ export class PersistentStorage {
     try {
       await fs.unlink(this.snapshotFile);
     } catch (error) {
-      // Ignore if file doesn't exist
+      console.error("Error clearing snapshot:", error);
     }
   }
 }

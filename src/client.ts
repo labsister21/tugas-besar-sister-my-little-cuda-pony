@@ -22,7 +22,9 @@ export class RaftClient {
           return this.currentLeader;
         }
       } catch (error) {
-        // Leader might be down
+        console.log(
+          `Current leader ${this.currentLeader.id} is down, searching for a new leader...`
+        );
       }
     }
 
@@ -40,7 +42,9 @@ export class RaftClient {
           return response.data.leader;
         }
       } catch (error) {
-        // Node is down
+        console.log(
+          `Node ${node.id} is down or not a leader, trying next node...`
+        );
       }
     }
 
@@ -187,7 +191,9 @@ export class RaftClient {
                 (n) => n.id === commandParts[0]
               );
               if (!nodeToAdd) {
-                console.log(`Node ${commandParts[0]} not found in default cluster`);
+                console.log(
+                  `Node ${commandParts[0]} not found in default cluster`
+                );
                 break;
               }
               await this.executeCommand(
@@ -211,7 +217,9 @@ export class RaftClient {
 
             case "ping":
               if (this.clusterNodes.length === 0) {
-                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                console.log(
+                  "Not connected to any node. Use 'connect <nodeId>' first."
+                );
                 break;
               }
               const pongResult = await this.executeCommand(
@@ -223,7 +231,9 @@ export class RaftClient {
 
             case "get":
               if (this.clusterNodes.length === 0) {
-                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                console.log(
+                  "Not connected to any node. Use 'connect <nodeId>' first."
+                );
                 break;
               }
               if (commandParts.length < 1) {
@@ -239,7 +249,9 @@ export class RaftClient {
 
             case "set":
               if (this.clusterNodes.length === 0) {
-                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                console.log(
+                  "Not connected to any node. Use 'connect <nodeId>' first."
+                );
                 break;
               }
               if (commandParts.length < 2) {
@@ -256,7 +268,9 @@ export class RaftClient {
 
             case "strln":
               if (this.clusterNodes.length === 0) {
-                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                console.log(
+                  "Not connected to any node. Use 'connect <nodeId>' first."
+                );
                 break;
               }
               if (commandParts.length < 1) {
@@ -272,7 +286,9 @@ export class RaftClient {
 
             case "del":
               if (this.clusterNodes.length === 0) {
-                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                console.log(
+                  "Not connected to any node. Use 'connect <nodeId>' first."
+                );
                 break;
               }
               if (commandParts.length < 1) {
@@ -288,7 +304,9 @@ export class RaftClient {
 
             case "append":
               if (this.clusterNodes.length === 0) {
-                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                console.log(
+                  "Not connected to any node. Use 'connect <nodeId>' first."
+                );
                 break;
               }
               if (commandParts.length < 2) {
@@ -305,7 +323,9 @@ export class RaftClient {
 
             case "request_log":
               if (this.clusterNodes.length === 0) {
-                console.log("Not connected to any node. Use 'connect <nodeId>' first.");
+                console.log(
+                  "Not connected to any node. Use 'connect <nodeId>' first."
+                );
                 break;
               }
               const logs = await this.executeCommand(
