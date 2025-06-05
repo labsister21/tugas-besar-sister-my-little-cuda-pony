@@ -12,11 +12,12 @@ export class RaftClient {
     this.clusterNodes = clusterNodes;
   }
 
-  private async findLeader(): Promise<NodeInfo> {
-    if (this.currentLeader) {
+  private async findLeader(attempt: number = 0): Promise<NodeInfo> {
+    if (this.currentLeader && attempt === 0) {
       try {
         const response = await axios.get(
-          `http://${this.currentLeader.host}:${this.currentLeader.port}/health`
+          `http://${this.currentLeader.host}:${this.currentLeader.port}/health`,
+          { timeout: 1000 }
         );
         if (response.data.state === "LEADER") {
           return this.currentLeader;
@@ -28,11 +29,15 @@ export class RaftClient {
       }
     }
 
-    // Try to find leader
+    // Try with increasing timeouts
+    const timeout = Math.min(1000 * Math.pow(1.5, attempt), 5000);
+
+    // Try each node in the cluster
     for (const node of this.clusterNodes) {
       try {
         const response = await axios.get(
-          `http://${node.host}:${node.port}/health`
+          `http://${node.host}:${node.port}/health`,
+          { timeout }
         );
         if (response.data.state === "LEADER") {
           this.currentLeader = node;
@@ -48,12 +53,26 @@ export class RaftClient {
       }
     }
 
-    throw new Error("No leader found");
+    // If we didn't find a leader but have more retries, try again
+    const maxRetries = 2;
+    if (attempt < maxRetries) {
+      console.log(
+        `No leader found, retrying (attempt ${attempt + 1}/${
+          maxRetries + 1
+        })...`
+      );
+      const backoffMs = Math.min(500 * Math.pow(2, attempt), 2000);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      return this.findLeader(attempt + 1);
+    }
+
+    throw new Error("No leader found after multiple attempts");
   }
 
   private async executeCommand(
     command: Command,
-    targetNodeId?: string
+    targetNodeId?: string,
+    attempt: number = 0
   ): Promise<any> {
     try {
       let targetNode: NodeInfo;
@@ -68,9 +87,13 @@ export class RaftClient {
         targetNode = await this.findLeader();
       }
 
+      // Calculate timeout with exponential backoff
+      const timeout = Math.min(1000 * Math.pow(1.5, attempt), 10000);
+
       const response = await axios.post<ClientResponse>(
         `http://${targetNode.host}:${targetNode.port}/execute`,
-        { command }
+        { command },
+        { timeout }
       );
 
       if (
@@ -80,7 +103,7 @@ export class RaftClient {
         // redirect to leader
         if (response.data.leaderInfo) {
           this.currentLeader = response.data.leaderInfo;
-          return this.executeCommand(command);
+          return this.executeCommand(command, undefined, attempt);
         }
         throw new Error("No leader available");
       }
@@ -98,9 +121,31 @@ export class RaftClient {
         const leaderInfo = error.response.data.leaderInfo;
         if (leaderInfo) {
           this.currentLeader = leaderInfo;
-          return this.executeCommand(command);
+          return this.executeCommand(command, undefined, attempt);
         }
       }
+
+      // If we're on the last retry, or this isn't a retry-able error, throw
+      const maxRetries = 3;
+      if (attempt >= maxRetries) {
+        throw error;
+      }
+
+      // For network errors or 500s, retry with backoff
+      if (
+        axios.isAxiosError(error) &&
+        (!error.response || error.response.status >= 500)
+      ) {
+        console.log(
+          `Request failed (attempt ${attempt + 1}/${maxRetries + 1}): ${
+            error.message
+          }. Retrying...`
+        );
+        const backoffMs = Math.min(100 * Math.pow(2, attempt), 2000);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        return this.executeCommand(command, targetNodeId, attempt + 1);
+      }
+
       throw error;
     }
   }

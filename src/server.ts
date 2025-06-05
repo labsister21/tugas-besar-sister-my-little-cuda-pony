@@ -51,17 +51,48 @@ export class RaftServer {
             error: "Not a leader",
             leaderInfo,
             code: "NOT_LEADER",
+            retriable: true, // Indicates this error can be retried
           } as ClientResponse);
           return;
         }
 
-        const { command } = req.body as ClientRequest;
-        const result = await this.raftNode.executeCommand(command);
+        try {
+          const { command } = req.body as ClientRequest;
+          const result = await this.raftNode.executeCommand(command);
 
-        res.json({
-          success: true,
-          data: result,
-        } as ClientResponse);
+          res.json({
+            success: true,
+            data: result,
+          } as ClientResponse);
+        } catch (error) {
+          const errorMsg =
+            error instanceof Error ? error.message : String(error);
+
+          // Differentiate between different error types
+          if (errorMsg.includes("Lost leadership")) {
+            res.status(400).json({
+              success: false,
+              error: errorMsg,
+              leaderInfo: this.raftNode.getLeaderInfo(),
+              code: "LOST_LEADERSHIP",
+              retriable: true,
+            } as ClientResponse);
+          } else if (errorMsg.includes("timeout")) {
+            res.status(503).json({
+              success: false,
+              error: errorMsg,
+              code: "TIMEOUT",
+              retriable: true,
+            } as ClientResponse);
+          } else {
+            res.status(500).json({
+              success: false,
+              error: errorMsg,
+              code: "UNKNOWN_ERROR",
+              retriable: false,
+            } as ClientResponse);
+          }
+        }
       })
     );
 
