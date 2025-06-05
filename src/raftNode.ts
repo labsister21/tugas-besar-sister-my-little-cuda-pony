@@ -33,10 +33,10 @@ export class RaftNode extends EventEmitter {
   private lastSnapshotIndex: number = -1;
   private lastSnapshotTerm: number = 0;
 
-  private static readonly HEARTBEAT_INTERVAL = 2000;
-  private static readonly MIN_ELECTION_TIMEOUT = 5000;
-  private static readonly MAX_ELECTION_TIMEOUT = 8000;
-  private static readonly VOTE_REQUEST_TIMEOUT = 1500;
+  private static readonly HEARTBEAT_INTERVAL = 250;
+  private static readonly MIN_ELECTION_TIMEOUT = 750;
+  private static readonly MAX_ELECTION_TIMEOUT = 1500;
+  private static readonly VOTE_REQUEST_TIMEOUT = 500;
   private static readonly SNAPSHOT_THRESHOLD = 100;
 
   constructor(private nodeInfo: NodeInfo, private clusterNodes: NodeInfo[]) {
@@ -308,7 +308,7 @@ export class RaftNode extends EventEmitter {
       const response = await axios.post<AppendEntriesResponse>(
         `http://${node.host}:${node.port}/raft/append`,
         request,
-        { timeout: 1500 }
+        { timeout: 500 }
       );
 
       if (this.state !== NodeState.LEADER) {
@@ -362,7 +362,7 @@ export class RaftNode extends EventEmitter {
       const response = await axios.post<AppendEntriesResponse>(
         `http://${node.host}:${node.port}/raft/append`,
         request,
-        { timeout: 2500 }
+        { timeout: 1000 }
       );
 
       if (response.data.success) {
@@ -889,7 +889,7 @@ export class RaftNode extends EventEmitter {
     const response = await axios.post<AppendEntriesResponse>(
       `http://${node.host}:${node.port}/raft/append`,
       request,
-      { timeout: 1500 }
+      { timeout: 500 }
     );
 
     if (!response.data.success || response.data.term > this.currentTerm) {
@@ -902,7 +902,7 @@ export class RaftNode extends EventEmitter {
       const timeoutId = setTimeout(() => {
         this.commandResults.delete(entry.index);
         reject(new Error(`Command timeout for entry index ${entry.index}`));
-      }, 15000);
+      }, 5000);
 
       const checkApplied = () => {
         if (this.lastApplied >= entry.index) {
